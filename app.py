@@ -116,15 +116,14 @@ def clear_history():
     return [], ""
 
 
+# Custom CSS
+CUSTOM_CSS = """
+.chatbot-container { height: 500px !important; }
+footer { display: none !important; }
+"""
+
 # Create Gradio interface
-with gr.Blocks(
-    title="무료 AI 챗봇",
-    theme=gr.themes.Soft(),
-    css="""
-    .chatbot-container { height: 500px !important; }
-    footer { display: none !important; }
-    """
-) as demo:
+with gr.Blocks(title="무료 AI 챗봇") as demo:
     gr.Markdown(
         """
         # 🤖 무료 AI 챗봇
@@ -141,8 +140,6 @@ with gr.Blocks(
             chatbot = gr.Chatbot(
                 label="대화",
                 height=500,
-                show_copy_button=True,
-                placeholder="메시지를 입력하세요...",
             )
 
             with gr.Row():
@@ -248,4 +245,6 @@ if __name__ == "__main__":
         server_port=7860,
         share=False,
         show_error=True,
+        theme=gr.themes.Soft(),
+        css=CUSTOM_CSS,
     )
