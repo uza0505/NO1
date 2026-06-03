@@ -197,11 +197,19 @@
         scene.add(mesh);
       });
 
-      // Top frame
-      const topGeo = new THREE.BoxGeometry(MACHINE_W + 0.2, 0.15, MACHINE_D + 0.2);
-      const top = new THREE.Mesh(topGeo, frameMat);
-      top.position.set(0, MACHINE_H, 0);
-      scene.add(top);
+      // Top frame - 4 edge beams only (no solid panel)
+      const topBeams = [
+        { size: [MACHINE_W + 0.16, 0.12, 0.12], pos: [0, MACHINE_H, -hd] },
+        { size: [MACHINE_W + 0.16, 0.12, 0.12], pos: [0, MACHINE_H,  hd] },
+        { size: [0.12, 0.12, MACHINE_D + 0.16], pos: [-hw, MACHINE_H, 0] },
+        { size: [0.12, 0.12, MACHINE_D + 0.16], pos: [ hw, MACHINE_H, 0] },
+      ];
+      topBeams.forEach(b => {
+        const geo = new THREE.BoxGeometry(...b.size);
+        const mesh = new THREE.Mesh(geo, frameMat);
+        mesh.position.set(...b.pos);
+        scene.add(mesh);
+      });
 
       // Collection box (left side)
       const boxMat = new THREE.MeshPhongMaterial({ color: 0x8B4513, shininess: 30 });
@@ -305,39 +313,45 @@
     let grabbedBlob = null;
     let clawOpen = true;
 
+    const wireMat = new THREE.MeshPhongMaterial({ color: 0xcccccc, shininess: 80 });
+    const clawMat = new THREE.MeshPhongMaterial({ color: 0xf9ca24, shininess: 120 });
+
+    // Wire: separate from clawGroup, stretches from top rail to hub
+    const wireGeo = new THREE.CylinderGeometry(0.03, 0.03, 1, 8);
+    const wireMesh = new THREE.Mesh(wireGeo, wireMat);
+    scene.add(wireMesh);
+
+    // Claw group (hub + prongs) positioned at clawY
     const clawGroup = new THREE.Group();
     scene.add(clawGroup);
 
-    const wireMat = new THREE.MeshPhongMaterial({ color: 0xd4d4d4, shininess: 80 });
-    const clawMat = new THREE.MeshPhongMaterial({ color: 0xf9ca24, shininess: 100 });
-
-    // Wire/rope
-    const wireGeo = new THREE.CylinderGeometry(0.025, 0.025, 1, 8);
-    const wireMesh = new THREE.Mesh(wireGeo, wireMat);
-    clawGroup.add(wireMesh);
-
     // Hub
-    const hubGeo = new THREE.SphereGeometry(0.18, 10, 10);
+    const hubGeo = new THREE.SphereGeometry(0.25, 12, 12);
     const hub = new THREE.Mesh(hubGeo, clawMat);
+    hub.castShadow = true;
     clawGroup.add(hub);
 
-    // 3 prongs
+    // 3 prongs - bigger and more visible
     const prongs = [];
     for (let i = 0; i < 3; i++) {
       const angle = (i / 3) * Math.PI * 2;
       const prongGroup = new THREE.Group();
       prongGroup.rotation.y = angle;
 
-      const upperGeo = new THREE.CylinderGeometry(0.025, 0.025, 0.5, 8);
+      // Upper arm
+      const upperGeo = new THREE.CylinderGeometry(0.04, 0.04, 0.65, 8);
       const upper = new THREE.Mesh(upperGeo, clawMat);
-      upper.position.set(0.2, -0.25, 0);
-      upper.rotation.z = 0.4;
+      upper.castShadow = true;
+      upper.position.set(0.22, -0.32, 0);
+      upper.rotation.z = 0.55;
       prongGroup.add(upper);
 
-      const lowerGeo = new THREE.CylinderGeometry(0.02, 0.025, 0.45, 8);
+      // Lower arm (curved tip)
+      const lowerGeo = new THREE.CylinderGeometry(0.03, 0.04, 0.55, 8);
       const lower = new THREE.Mesh(lowerGeo, clawMat);
-      lower.position.set(0.35, -0.58, 0);
-      lower.rotation.z = -0.5;
+      lower.castShadow = true;
+      lower.position.set(0.42, -0.72, 0);
+      lower.rotation.z = -0.65;
       prongGroup.add(lower);
 
       clawGroup.add(prongGroup);
@@ -345,19 +359,19 @@
     }
 
     function updateClaw() {
-      const wireLen = MACHINE_H - clawY;
-      wireMesh.scale.y = Math.max(wireLen, 0.1);
-      wireMesh.position.set(0, MACHINE_H - clawY - wireLen / 2, 0);
+      // Wire: from top rail (MACHINE_H) down to claw hub (clawY)
+      const wireLen = Math.max(MACHINE_H - clawY, 0.05);
+      wireMesh.scale.y = wireLen;
+      wireMesh.position.set(clawX, clawY + wireLen / 2, clawZ);
 
-      hub.position.set(0, 0, 0);
+      // Claw group at current position
+      clawGroup.position.set(clawX, clawY, clawZ);
 
       // Prong open/close animation
-      const openAngle = clawOpen ? 0 : -0.5;
+      const openAngle = clawOpen ? 0 : -0.6;
       prongs.forEach(p => {
-        p.rotation.z = THREE.MathUtils.lerp(p.rotation.z, openAngle, 0.15);
+        p.rotation.z = THREE.MathUtils.lerp(p.rotation.z, openAngle, 0.12);
       });
-
-      clawGroup.position.set(clawX, clawY, clawZ);
     }
 
     // ---- Game State ----
