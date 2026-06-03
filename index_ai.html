@@ -109,9 +109,9 @@
     </div>
     <div class="panel" id="hint-panel">
       <h3>조작 방법</h3>
+      ☝️ 검지 끝으로 이동<br>
       ✊ 손 쥐기 → 공 잡기<br>
-      🤚 손 펴기 → 공 놓기<br>
-      🧺 <span class="grab-indicator">바구니 위에서 놓기</span> → 획득!
+      🧺 <span class="grab-indicator">바구니 위에서 펴기</span> → 획득!
     </div>
   </div>
 
@@ -222,8 +222,8 @@
     let heldBall = null;
     let balls = [];
 
-    // 바구니: canvas 좌표계에서 x=0.82 → 미러 후 시각적으로 왼쪽 상단 18%
-    const BASKET = { x: 0.80, y: 0.04, w: 0.18, h: 0.22 };
+    // 바구니: canvas x=0.76, y=0.06 → 미러 후 시각적으로 왼쪽 상단 (잘리지 않게 여백 확보)
+    const BASKET = { x: 0.74, y: 0.06, w: 0.20, h: 0.22 };
 
     // ---- Balls ----
     function createBalls() {
@@ -280,11 +280,8 @@
     }
 
     function getHandCenter(landmarks) {
-      // Use average of palm landmarks
-      const palmIds = [0, 1, 5, 9, 13, 17];
-      let x = 0, y = 0;
-      palmIds.forEach(i => { x += landmarks[i].x; y += landmarks[i].y; });
-      return { x: x / palmIds.length, y: y / palmIds.length };
+      // 검지 손가락 끝(8)을 커서로 사용 — 더 정밀하고 직관적
+      return { x: landmarks[8].x, y: landmarks[8].y };
     }
 
     // ---- Game Logic ----
@@ -621,10 +618,15 @@
       ctx.beginPath(); ctx.arc(h.x, h.y, ringR, 0, Math.PI*2); ctx.stroke();
       ctx.fillStyle = isGrabbing ? 'rgba(249,202,36,0.3)' : 'rgba(255,255,255,0.15)';
       ctx.beginPath(); ctx.arc(h.x, h.y, ringR, 0, Math.PI*2); ctx.fill();
-      ctx.font = `${isGrabbing ? 20 : 18}px Arial`;
+      // 검지 끝 표시: 작은 원 + 집는 중이면 채워진 원
+      ctx.fillStyle = isGrabbing ? '#f9ca24' : 'rgba(255,255,255,0.9)';
+      ctx.beginPath();
+      ctx.arc(h.x, h.y, isGrabbing ? 10 : 7, 0, Math.PI * 2);
+      ctx.fill();
+      // 검지 아이콘
+      ctx.font = '15px Arial';
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillStyle = '#fff';
-      ctx.fillText(isGrabbing ? '✊' : '🤚', h.x, h.y);
+      ctx.fillText(isGrabbing ? '👇' : '☝️', h.x, h.y - 28);
       ctx.restore();
     }
 
