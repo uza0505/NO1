@@ -137,8 +137,9 @@
 
     const physicsMat = new CANNON.Material('blobs');
     const contactMat = new CANNON.ContactMaterial(physicsMat, physicsMat, {
-      friction: 0.4, restitution: 0.3
+      friction: 0.5, restitution: 0.05
     });
+    world.defaultContactMaterial.restitution = 0.05;
     world.addContactMaterial(contactMat);
 
     // ---- Machine Box ----
@@ -458,10 +459,8 @@
           if (blob) {
             blob.grabbed = true;
             grabbedBlob = blob;
-            blob.body.mass = 0;
-            blob.body.updateMassProperties();
-            blob.body.velocity.set(0, 0, 0);
-            blob.body.angularVelocity.set(0, 0, 0);
+            // 물리 세계에서 완전히 제거해야 mesh를 직접 제어 가능
+            world.remove(blob.body);
             clawOpen = false;
             clawState = 'raising';
             setStatus('잡았다! 올리는 중...');
@@ -475,8 +474,8 @@
       } else if (clawState === 'raising') {
         clawY += CLAW_LOWER_SPEED;
         if (grabbedBlob) {
-          grabbedBlob.body.position.set(clawX, clawY - 0.4, clawZ);
-          grabbedBlob.mesh.position.copy(grabbedBlob.body.position);
+          // 물리에서 제거됐으므로 mesh 직접 조작
+          grabbedBlob.mesh.position.set(clawX, clawY - 0.5, clawZ);
         }
         if (clawY >= CLAW_HOME_Y) {
           clawY = CLAW_HOME_Y;
@@ -489,6 +488,9 @@
         const tx = BOX_X, tz = 0;
         const dx = tx - clawX, dz = tz - clawZ;
         const dist = Math.sqrt(dx * dx + dz * dz);
+        if (grabbedBlob) {
+          grabbedBlob.mesh.position.set(clawX, clawY - 0.5, clawZ);
+        }
         if (dist > 0.1) {
           const speed = 0.04;
           clawX += (dx / dist) * speed;
@@ -497,9 +499,11 @@
           // Drop
           clawOpen = true;
           if (grabbedBlob) {
+            // 물리 세계에 다시 추가해서 박스 안으로 떨어지게
             grabbedBlob.body.mass = 0.6;
             grabbedBlob.body.updateMassProperties();
-            grabbedBlob.body.position.set(BOX_X, BOX_Y + 1, 0);
+            grabbedBlob.body.position.set(BOX_X, BOX_Y + 1.5, 0);
+            world.addBody(grabbedBlob.body);
             grabbedBlob.body.velocity.set(0, -2, 0);
             addCaught(grabbedBlob.name);
             grabbedBlob.grabbed = false;
