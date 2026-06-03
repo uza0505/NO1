@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>손으로 공 잡기 게임</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #000; overflow: hidden; font-family: 'Arial', sans-serif; }
+
+    #container {
+      position: relative;
+      width: 100vw; height: 100vh;
+      display: flex; align-items: center; justify-content: center;
+    }
+
+    #video { display: none; }
+
+    #canvas {
+      width: 100vw; height: 100vh;
+      object-fit: cover;
+      transform: scaleX(-1); /* 거울 모드 */
+    }
+
+    #ui {
+      position: fixed; top: 0; left: 0; right: 0;
+      display: flex; justify-content: space-between; align-items: flex-start;
+      padding: 16px; pointer-events: none; z-index: 20;
+    }
+
+    .panel {
+      background: rgba(0,0,0,0.65);
+      border-radius: 14px; padding: 12px 20px;
+      color: white; border: 2px solid #f9ca24;
+      backdrop-filter: blur(6px);
+    }
+
+    #score-panel h2 { font-size: 13px; color: #f9ca24; margin-bottom: 2px; }
+    #score-panel .score { font-size: 36px; font-weight: bold; }
+
+    #hint-panel { font-size: 13px; color: #ddd; line-height: 1.9; }
+    #hint-panel h3 { color: #f9ca24; margin-bottom: 4px; font-size: 14px; }
+    .grab-indicator { color: #55efc4; font-weight: bold; }
+
+    #status-bar {
+      position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+      background: rgba(0,0,0,0.75); color: white; padding: 10px 28px;
+      border-radius: 28px; font-size: 15px; font-weight: bold;
+      border: 2px solid #6c5ce7; z-index: 20;
+      backdrop-filter: blur(6px);
+      transition: border-color 0.3s;
+    }
+
+    #loading {
+      position: fixed; inset: 0; background: #0a0a1a;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      color: white; z-index: 100; gap: 16px;
+    }
+    #loading h1 { font-size: 28px; color: #f9ca24; }
+    #loading p { color: #aaa; font-size: 15px; }
+    #loading-bar {
+      width: 260px; height: 8px;
+      background: #333; border-radius: 4px; overflow: hidden;
+    }
+    #loading-fill {
+      height: 100%; background: linear-gradient(90deg, #6c5ce7, #f9ca24);
+      border-radius: 4px; width: 0%; transition: width 0.4s;
+    }
+
+    #caught-list {
+      position: fixed; bottom: 24px; right: 20px;
+      background: rgba(0,0,0,0.65); border-radius: 12px; padding: 12px 16px;
+      color: white; font-size: 13px; border: 2px solid #00b894;
+      z-index: 20; max-height: 180px; overflow-y: auto;
+      backdrop-filter: blur(6px);
+    }
+    #caught-list h3 { color: #00b894; margin-bottom: 4px; }
+    .caught-item { padding: 2px 0; }
+  </style>
+</head>
+<body>
+  <div id="loading">
+    <h1>🎮 손으로 공 잡기</h1>
+    <p id="loading-text">MediaPipe 로딩 중...</p>
+    <div id="loading-bar"><div id="loading-fill"></div></div>
+    <p style="color:#666; font-size:12px;">카메라 권한을 허용해 주세요</p>
+  </div>
+
+  <div id="container">
+    <video id="video" playsinline></video>
+    <canvas id="canvas"></canvas>
+  </div>
+
+  <div id="ui">
+    <div class="panel" id="score-panel">
+      <h2>획득한 공</h2>
+      <div class="score" id="score">0</div>
+    </div>
+    <div class="panel" id="hint-panel">
+      <h3>조작 방법</h3>
+      ✊ 손 쥐기 → 공 잡기<br>
+      🤚 손 펴기 → 공 놓기<br>
+      🧺 <span class="grab-indicator">바구니 위에서 놓기</span> → 획득!
+    </div>
+  </div>
+
+  <div id="status-bar" id="status">카메라를 준비 중입니다...</div>
+
+  <div id="caught-list">
+    <h3>🎉 획득 목록</h3>
+    <div id="caught-items"></div>
+  </div>
+
+  <!-- MediaPipe CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+  <script>
+    // ---- Config ----
+    const NUM_BALLS = 15;
+    const BALL_NAMES = [
+      '핑크 슬라임', '노란 병아리', '보라 몬스터', '초록 개구리',
+      '하늘 고양이', '라벤더 곰', '민트 공룡', '주황 여우',
+      '빨강 악마', '파랑 고래', '회색 두더지', '검정 팬더',
+      '청록 물고기', '노을 오리', '흰 토끼',
+    ];
+    const BALL_COLORS = [
+      '#ff6b9d', '#f9ca24', '#a29bfe', '#00b894',
+      '#74b9ff', '#d3a4ff', '#55efc4', '#e17055',
+      '#d63031', '#0984e3', '#636e72', '#2d3436',
+      '#00cec9', '#fdcb6e', '#dfe6e9',
+    ];
+
+    // ---- State ----
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const statusBar = document.getElementById('status-bar');
+    const scoreEl = document.getElementById('score');
+    const caughtItemsEl = document.getElementById('caught-items');
+    const loadingEl = document.getElementById('loading');
+    const loadingFill = document.getElementById('loading-fill');
+    const loadingText = document.getElementById('loading-text');
+
+    let score = 0;
+    let handPos = null;       // {x, y} normalized 0-1
+    let isGrabbing = false;
+    let grabConfidence = 0;   // 0-1 pinch strength
+    let heldBall = null;
+    let balls = [];
+
+    // Basket position (top-left area, normalized)
+    const BASKET = { x: 0.12, y: 0.15, w: 0.16, h: 0.18 };
+
+    // ---- Balls ----
+    function createBalls() {
+      balls = [];
+      for (let i = 0; i < NUM_BALLS; i++) {
+        balls.push({
+          id: i,
+          x: 0.2 + Math.random() * 0.6,
+          y: 0.2 + Math.random() * 0.6,
+          vx: (Math.random() - 0.5) * 0.002,
+          vy: (Math.random() - 0.5) * 0.002,
+          r: 0.038 + Math.random() * 0.022,
+          color: BALL_COLORS[i % BALL_COLORS.length],
+          name: BALL_NAMES[i % BALL_NAMES.length],
+          held: false,
+          scored: false,
+          wobble: Math.random() * Math.PI * 2,
+          wobbleSpeed: 0.04 + Math.random() * 0.03,
+        });
+      }
+    }
+
+    // ---- Hand Tracking ----
+    function dist2D(x1, y1, x2, y2) {
+      return Math.sqrt((x1 - x2) ** 2 + (y1 - y2) ** 2);
+    }
+
+    function detectGrab(landmarks) {
+      // Thumb tip (4) vs Index tip (8)
+      const thumb = landmarks[4];
+      const index = landmarks[8];
+      const pinchDist = dist2D(thumb.x, thumb.y, index.x, index.y);
+
+      // All finger tips vs palm center (wrist=0, middle base=9)
+      const wrist = landmarks[0];
+      const midBase = landmarks[9];
+      const palmSize = dist2D(wrist.x, wrist.y, midBase.x, midBase.y);
+
+      // Finger curl: tip vs base distance
+      const fingerTips = [8, 12, 16, 20];
+      const fingerBases = [5, 9, 13, 17];
+      let curledCount = 0;
+      for (let i = 0; i < fingerTips.length; i++) {
+        const tip = landmarks[fingerTips[i]];
+        const base = landmarks[fingerBases[i]];
+        const tipToWrist = dist2D(tip.x, tip.y, wrist.x, wrist.y);
+        const baseToWrist = dist2D(base.x, base.y, wrist.x, wrist.y);
+        if (tipToWrist < baseToWrist * 1.1) curledCount++;
+      }
+
+      const pinchStrength = Math.max(0, 1 - pinchDist / (palmSize * 0.8));
+      const curlStrength = curledCount / 4;
+      return Math.min(1, pinchStrength * 0.6 + curlStrength * 0.4);
+    }
+
+    function getHandCenter(landmarks) {
+      // Use average of palm landmarks
+      const palmIds = [0, 1, 5, 9, 13, 17];
+      let x = 0, y = 0;
+      palmIds.forEach(i => { x += landmarks[i].x; y += landmarks[i].y; });
+      return { x: x / palmIds.length, y: y / palmIds.length };
+    }
+
+    // ---- Game Logic ----
+    function update() {
+      if (!handPos) return;
+
+      // Mirror hand position (canvas is mirrored via CSS)
+      const hx = 1 - handPos.x;
+      const hy = handPos.y;
+
+      // Grab detection
+      const wasGrabbing = isGrabbing;
+      isGrabbing = grabConfidence > 0.55;
+
+      if (isGrabbing && !wasGrabbing) {
+        // Try to grab nearest ball
+        if (!heldBall) {
+          let nearest = null, nearDist = Infinity;
+          balls.forEach(b => {
+            if (b.scored) return;
+            const d = dist2D(hx, hy, b.x, b.y);
+            if (d < b.r * 2.5 && d < nearDist) { nearDist = d; nearest = b; }
+          });
+          if (nearest) {
+            heldBall = nearest;
+            nearest.held = true;
+            setStatus('✊ 잡았다! 바구니로 가져가세요!');
+          }
+        }
+      }
+
+      if (!isGrabbing && wasGrabbing) {
+        // Release ball
+        if (heldBall) {
+          // Check if over basket
+          if (hx < BASKET.x + BASKET.w && hx > BASKET.x - 0.05 &&
+              hy < BASKET.y + BASKET.h && hy > BASKET.y - 0.05) {
+            score++;
+            scoreEl.textContent = score;
+            heldBall.scored = true;
+            const div = document.createElement('div');
+            div.className = 'caught-item';
+            div.textContent = `🎉 ${heldBall.name}`;
+            caughtItemsEl.prepend(div);
+            setStatus('🎉 획득! 대단해요!');
+            statusBar.style.borderColor = '#00b894';
+            setTimeout(() => { statusBar.style.borderColor = '#6c5ce7'; }, 1200);
+          } else {
+            // Drop with a little velocity
+            heldBall.vx = (Math.random() - 0.5) * 0.01;
+            heldBall.vy = (Math.random() - 0.5) * 0.01;
+            setStatus('아쉽다! 바구니 위에서 손을 펴세요!');
+          }
+          heldBall.held = false;
+          heldBall = null;
+        }
+      }
+
+      // Move held ball
+      if (heldBall && isGrabbing) {
+        heldBall.x += (hx - heldBall.x) * 0.35;
+        heldBall.y += (hy - heldBall.y) * 0.35;
+        heldBall.vx = 0; heldBall.vy = 0;
+      }
+
+      // Physics for free balls
+      balls.forEach(b => {
+        if (b.held || b.scored) return;
+        b.x += b.vx;
+        b.y += b.vy;
+        b.vx *= 0.98;
+        b.vy *= 0.98;
+        // Bounce off edges
+        if (b.x - b.r < 0) { b.x = b.r; b.vx *= -0.6; }
+        if (b.x + b.r > 1) { b.x = 1 - b.r; b.vx *= -0.6; }
+        if (b.y - b.r < 0) { b.y = b.r; b.vy *= -0.6; }
+        if (b.y + b.r > 1) { b.y = 1 - b.r; b.vy *= -0.6; }
+        b.wobble += b.wobbleSpeed;
+      });
+    }
+
+    // ---- Drawing ----
+    function drawBasket(W, H) {
+      const bx = BASKET.x * W, by = BASKET.y * H;
+      const bw = BASKET.w * W, bh = BASKET.h * H;
+
+      // Glow when hand is near
+      const isNear = handPos &&
+        (1 - handPos.x) > BASKET.x - 0.08 && (1 - handPos.x) < BASKET.x + BASKET.w + 0.08 &&
+        handPos.y > BASKET.y - 0.08 && handPos.y < BASKET.y + BASKET.h + 0.08;
+
+      ctx.save();
+      if (isNear && heldBall) {
+        ctx.shadowColor = '#00b894';
+        ctx.shadowBlur = 24;
+      }
+
+      // Basket body
+      ctx.strokeStyle = isNear && heldBall ? '#00b894' : '#f9ca24';
+      ctx.lineWidth = 3;
+      ctx.fillStyle = 'rgba(0,0,0,0.35)';
+
+      // Draw basket shape
+      ctx.beginPath();
+      ctx.moveTo(bx, by);
+      ctx.lineTo(bx + bw, by);
+      ctx.lineTo(bx + bw * 0.9, by + bh);
+      ctx.lineTo(bx + bw * 0.1, by + bh);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+
+      // Weave lines
+      ctx.strokeStyle = isNear && heldBall ? 'rgba(0,184,148,0.5)' : 'rgba(249,202,36,0.4)';
+      ctx.lineWidth = 1.5;
+      for (let i = 1; i < 4; i++) {
+        const t = i / 4;
+        ctx.beginPath();
+        ctx.moveTo(bx + bw * (0 + 0.1 * t), by + bh * t);
+        ctx.lineTo(bx + bw * (1 - 0.1 * t), by + bh * t);
+        ctx.stroke();
+      }
+
+      // Label
+      ctx.fillStyle = isNear && heldBall ? '#00b894' : '#f9ca24';
+      ctx.font = `bold ${Math.round(bw * 0.2)}px Arial`;
+      ctx.textAlign = 'center';
+      ctx.fillText('🧺', bx + bw / 2, by - 6);
+      ctx.restore();
+    }
+
+    function drawBall(b, W, H) {
+      if (b.scored) return;
+      const x = b.x * W, y = b.y * H;
+      const r = b.r * Math.min(W, H);
+      const wobbleR = r + (b.held ? Math.sin(b.wobble) * r * 0.08 : 0);
+
+      ctx.save();
+      if (b.held) {
+        ctx.shadowColor = b.color;
+        ctx.shadowBlur = 20;
+      }
+
+      // Main sphere gradient
+      const grad = ctx.createRadialGradient(x - r * 0.3, y - r * 0.3, r * 0.1, x, y, wobbleR);
+      grad.addColorStop(0, '#ffffff');
+      grad.addColorStop(0.25, b.color);
+      grad.addColorStop(1, shadeColor(b.color, -50));
+      ctx.fillStyle = grad;
+
+      ctx.beginPath();
+      ctx.arc(x, y, wobbleR, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Eyes
+      const eyeR = r * 0.15;
+      const eyeOff = r * 0.28;
+      // White
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath(); ctx.arc(x - eyeOff, y - eyeOff * 0.3, eyeR, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(x + eyeOff, y - eyeOff * 0.3, eyeR, 0, Math.PI * 2); ctx.fill();
+      // Pupil
+      ctx.fillStyle = '#222';
+      ctx.beginPath(); ctx.arc(x - eyeOff + 1, y - eyeOff * 0.3 + 1, eyeR * 0.55, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(x + eyeOff + 1, y - eyeOff * 0.3 + 1, eyeR * 0.55, 0, Math.PI * 2); ctx.fill();
+
+      ctx.restore();
+    }
+
+    function drawHand(W, H) {
+      if (!handPos) return;
+      const hx = (1 - handPos.x) * W;
+      const hy = handPos.y * H;
+
+      ctx.save();
+      const alpha = 0.7 + grabConfidence * 0.3;
+      ctx.globalAlpha = alpha;
+
+      // Outer ring
+      ctx.strokeStyle = isGrabbing ? '#f9ca24' : '#ffffff';
+      ctx.lineWidth = 3;
+      const ringR = isGrabbing ? 22 : 28;
+      ctx.beginPath();
+      ctx.arc(hx, hy, ringR, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // Inner fill
+      ctx.fillStyle = isGrabbing ? 'rgba(249,202,36,0.3)' : 'rgba(255,255,255,0.15)';
+      ctx.beginPath();
+      ctx.arc(hx, hy, ringR, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Grab state icon
+      ctx.font = `${isGrabbing ? 20 : 18}px Arial`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = '#fff';
+      ctx.fillText(isGrabbing ? '✊' : '🤚', hx, hy);
+
+      ctx.restore();
+    }
+
+    function drawAllBalls(W, H) {
+      // Draw non-held first
+      balls.forEach(b => { if (!b.held) drawBall(b, W, H); });
+      // Draw held on top
+      balls.forEach(b => { if (b.held) drawBall(b, W, H); });
+    }
+
+    function shadeColor(hex, amt) {
+      const num = parseInt(hex.replace('#', ''), 16);
+      const r = Math.max(0, Math.min(255, (num >> 16) + amt));
+      const g = Math.max(0, Math.min(255, ((num >> 8) & 0xff) + amt));
+      const b = Math.max(0, Math.min(255, (num & 0xff) + amt));
+      return `rgb(${r},${g},${b})`;
+    }
+
+    function render(W, H) {
+      ctx.clearRect(0, 0, W, H);
+
+      // Draw video frame (mirrored because canvas transform:scaleX(-1))
+      ctx.save();
+      ctx.scale(-1, 1);
+      ctx.drawImage(video, -W, 0, W, H);
+      ctx.restore();
+
+      // Dark overlay
+      ctx.fillStyle = 'rgba(0,0,0,0.18)';
+      ctx.fillRect(0, 0, W, H);
+
+      drawBasket(W, H);
+      drawAllBalls(W, H);
+      drawHand(W, H);
+
+      // Grab strength bar
+      if (handPos) {
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.beginPath();
+        ctx.roundRect(W / 2 - 60, H - 50, 120, 14, 7);
+        ctx.fill();
+        const fillColor = grabConfidence > 0.55 ? '#f9ca24' : '#74b9ff';
+        ctx.fillStyle = fillColor;
+        ctx.beginPath();
+        ctx.roundRect(W / 2 - 60, H - 50, 120 * grabConfidence, 14, 7);
+        ctx.fill();
+        ctx.fillStyle = '#fff';
+        ctx.font = '11px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText(grabConfidence > 0.55 ? '✊ 쥐는 중' : '🤚 펼침', W / 2, H - 58);
+      }
+    }
+
+    function setStatus(msg) {
+      statusBar.textContent = msg;
+    }
+
+    // ---- Main Loop ----
+    function loop() {
+      const W = canvas.width, H = canvas.height;
+      update();
+      render(W, H);
+      requestAnimationFrame(loop);
+    }
+
+    // ---- MediaPipe Setup ----
+    function setupMediaPipe() {
+      const hands = new Hands({
+        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+      });
+
+      hands.setOptions({
+        maxNumHands: 1,
+        modelComplexity: 1,
+        minDetectionConfidence: 0.7,
+        minTrackingConfidence: 0.6,
+      });
+
+      hands.onResults((results) => {
+        if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+          const landmarks = results.multiHandLandmarks[0];
+          handPos = getHandCenter(landmarks);
+          grabConfidence = detectGrab(landmarks);
+          setStatus(isGrabbing
+            ? (heldBall ? `✊ ${heldBall.name} 잡는 중! 바구니로!` : '✊ 손을 쥐고 있어요')
+            : '🤚 손을 쥐어서 공을 잡으세요!');
+        } else {
+          handPos = null;
+          isGrabbing = false;
+          grabConfidence = 0;
+          if (heldBall) {
+            heldBall.held = false;
+            heldBall = null;
+          }
+          setStatus('손이 감지되지 않아요. 카메라 앞에 손을 보여주세요!');
+        }
+      });
+
+      const camera = new Camera(video, {
+        onFrame: async () => {
+          canvas.width = video.videoWidth || window.innerWidth;
+          canvas.height = video.videoHeight || window.innerHeight;
+          await hands.send({ image: video });
+        },
+        width: 1280, height: 720,
+      });
+
+      loadingText.textContent = '카메라 시작 중...';
+      loadingFill.style.width = '80%';
+
+      camera.start().then(() => {
+        loadingFill.style.width = '100%';
+        setTimeout(() => {
+          loadingEl.style.display = 'none';
+          setStatus('🤚 손을 카메라에 보여주세요!');
+          loop();
+        }, 500);
+      }).catch(err => {
+        loadingText.textContent = '카메라 오류: ' + err.message;
+        loadingText.style.color = '#ff6b6b';
+      });
+    }
+
+    // ---- Init ----
+    createBalls();
+    loadingFill.style.width = '30%';
+    loadingText.textContent = 'MediaPipe 초기화 중...';
+
+    // Wait for scripts to load
+    let checkCount = 0;
+    const checkReady = setInterval(() => {
+      checkCount++;
+      loadingFill.style.width = `${30 + checkCount * 5}%`;
+      if (typeof Hands !== 'undefined' && typeof Camera !== 'undefined') {
+        clearInterval(checkReady);
+        loadingFill.style.width = '60%';
+        loadingText.textContent = '카메라 권한 요청 중...';
+        setupMediaPipe();
+      }
+      if (checkCount > 20) {
+        clearInterval(checkReady);
+        loadingText.textContent = '스크립트 로드 실패. 새로고침 해주세요.';
+        loadingText.style.color = '#ff6b6b';
+      }
+    }, 300);
+  </script>
+</body>
+</html>
