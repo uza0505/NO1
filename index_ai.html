@@ -109,9 +109,9 @@
     </div>
     <div class="panel" id="hint-panel">
       <h3>조작 방법</h3>
-      ☝️ 검지를 공에 대면 붙어요<br>
-      🧺 <span class="grab-indicator">바구니로 끌어다 놓기</span><br>
-      &nbsp;&nbsp;&nbsp;→ 자동 획득!
+      ☝️ 검지로 공 근처 접근<br>
+      ✊ 주먹 쥐기 → 공 잡기<br>
+      🧺 <span class="grab-indicator">바구니에서 손 펴기</span> → 획득!
     </div>
   </div>
 
@@ -216,13 +216,14 @@
     const loadingText = document.getElementById('loading-text');
 
     let score = 0;
-    let handPos = null;       // {x, y} normalized 0-1
-    let isGrabbing = false; // 시각적 효과용으로만 유지
+    let handPos = null;
+    let grabConfidence = 0;
+    let isGrabbing = false;
     let heldBall = null;
     let balls = [];
 
-    // 바구니: 시각적으로 왼쪽 상단, 주소창 아래 충분한 여백
-    const BASKET = { x: 0.72, y: 0.12, w: 0.22, h: 0.22 };
+    // 바구니: y=0.28 로 내려서 노트북/모바일 모두 완전히 보이게
+    const BASKET = { x: 0.72, y: 0.28, w: 0.22, h: 0.24 };
 
     // ---- Balls ----
     function createBalls() {
@@ -290,29 +291,27 @@
       const hx = handPos.x;
       const hy = handPos.y;
 
-      // 검지가 공에 닿으면 자동으로 붙음
-      if (!heldBall) {
+      const wasGrabbing = isGrabbing;
+      isGrabbing = grabConfidence > 0.52;
+
+      // 주먹 쥐기 시작 → 검지 근처 공 잡기
+      if (isGrabbing && !wasGrabbing && !heldBall) {
         let nearest = null, nearDist = Infinity;
         balls.forEach(b => {
           if (b.scored) return;
           const d = dist2D(hx, hy, b.x, b.y);
-          if (d < b.r * 2.2 && d < nearDist) { nearDist = d; nearest = b; }
+          if (d < b.r * 3.0 && d < nearDist) { nearDist = d; nearest = b; }
         });
         if (nearest) {
           heldBall = nearest;
           nearest.held = true;
           resumeAudio(); playGrabSound();
-          setStatus('☝️ 바구니로 끌고 가세요!');
+          setStatus('✊ 잡았다! 바구니로 가져가세요!');
         }
       }
 
-      // 공을 들고 있으면 검지 따라 이동
-      if (heldBall) {
-        heldBall.x += (hx - heldBall.x) * 0.4;
-        heldBall.y += (hy - heldBall.y) * 0.4;
-        heldBall.vx = 0; heldBall.vy = 0;
-
-        // 바구니 안으로 들어오면 즉시 득점
+      // 주먹 펴기 → 공 놓기
+      if (!isGrabbing && wasGrabbing && heldBall) {
         if (hx > BASKET.x && hx < BASKET.x + BASKET.w &&
             hy > BASKET.y && hy < BASKET.y + BASKET.h) {
           score++;
@@ -326,9 +325,21 @@
           setStatus('🎉 획득! 대단해요!');
           statusBar.style.borderColor = '#00b894';
           setTimeout(() => { statusBar.style.borderColor = '#6c5ce7'; }, 1200);
-          heldBall.held = false;
-          heldBall = null;
+        } else {
+          heldBall.vx = (Math.random() - 0.5) * 0.01;
+          heldBall.vy = (Math.random() - 0.5) * 0.01;
+          playMissSound();
+          setStatus('아쉽다! 바구니 위에서 손을 펴세요!');
         }
+        heldBall.held = false;
+        heldBall = null;
+      }
+
+      // 공을 들고 있으면 검지 따라 이동
+      if (heldBall && isGrabbing) {
+        heldBall.x += (hx - heldBall.x) * 0.4;
+        heldBall.y += (hy - heldBall.y) * 0.4;
+        heldBall.vx = 0; heldBall.vy = 0;
       }
 
       // Physics for free balls
@@ -589,20 +600,18 @@
       if (!h) return;
       ctx.save();
       ctx.globalAlpha = 0.7 + grabConfidence * 0.3;
-      const hasball = !!heldBall;
-      ctx.strokeStyle = hasball ? '#f9ca24' : '#ffffff';
-      ctx.lineWidth = hasball ? 3 : 2;
-      const ringR = hasball ? 20 : 16;
+      const col = heldBall ? '#f9ca24' : (isGrabbing ? '#fd79a8' : '#ffffff');
+      ctx.strokeStyle = col;
+      ctx.lineWidth = isGrabbing ? 3 : 2;
+      const ringR = isGrabbing ? 18 : 14;
       ctx.beginPath(); ctx.arc(h.x, h.y, ringR, 0, Math.PI*2); ctx.stroke();
-      ctx.fillStyle = hasball ? 'rgba(249,202,36,0.35)' : 'rgba(255,255,255,0.15)';
+      ctx.fillStyle = isGrabbing ? 'rgba(249,202,36,0.25)' : 'rgba(255,255,255,0.12)';
       ctx.beginPath(); ctx.arc(h.x, h.y, ringR, 0, Math.PI*2); ctx.fill();
-      // 검지 끝 점
-      ctx.fillStyle = hasball ? '#f9ca24' : 'white';
+      ctx.fillStyle = col;
       ctx.beginPath(); ctx.arc(h.x, h.y, 5, 0, Math.PI*2); ctx.fill();
-      // 아이콘
       ctx.font = '14px Arial';
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText(hasball ? '🎯' : '☝️', h.x, h.y - 26);
+      ctx.fillText(heldBall ? '🎯' : (isGrabbing ? '✊' : '☝️'), h.x, h.y - 24);
       ctx.restore();
     }
 
@@ -627,16 +636,17 @@
 
       hands.setOptions({
         maxNumHands: 1,
-        modelComplexity: 1,
-        minDetectionConfidence: 0.7,
-        minTrackingConfidence: 0.6,
+        modelComplexity: 0,          // 모바일 성능 최적화
+        minDetectionConfidence: 0.6,
+        minTrackingConfidence: 0.5,
       });
 
       hands.onResults((results) => {
         if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
           const landmarks = results.multiHandLandmarks[0];
           handPos = getHandCenter(landmarks);
-          if (!heldBall) setStatus('☝️ 검지를 공에 가져다 대세요!');
+          grabConfidence = detectGrab(landmarks);
+          if (!heldBall) setStatus(isGrabbing ? '✊ 주먹 쥔 채로 공에 가져가세요!' : '☝️ 검지로 공에 다가가 주먹을 쥐세요!');
         } else {
           handPos = null;
           if (heldBall) {
