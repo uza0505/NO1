@@ -19,7 +19,7 @@
     #canvas {
       width: 100vw; height: 100vh;
       object-fit: cover;
-      transform: scaleX(-1); /* 거울 모드 */
+      /* 거울 모드는 canvas 내부에서 처리 */
     }
 
     #ui {
@@ -133,6 +133,67 @@
       '#00cec9', '#fdcb6e', '#dfe6e9',
     ];
 
+    // ---- Audio ----
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+    function playScoreSound() {
+      // 즐거운 상승 화음 + 팡파레 효과
+      const notes = [523.25, 659.25, 783.99, 1046.5]; // C5 E5 G5 C6
+      notes.forEach((freq, i) => {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.connect(gain); gain.connect(audioCtx.destination);
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(freq, audioCtx.currentTime + i * 0.08);
+        gain.gain.setValueAtTime(0, audioCtx.currentTime + i * 0.08);
+        gain.gain.linearRampToValueAtTime(0.22, audioCtx.currentTime + i * 0.08 + 0.03);
+        gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + i * 0.08 + 0.35);
+        osc.start(audioCtx.currentTime + i * 0.08);
+        osc.stop(audioCtx.currentTime + i * 0.08 + 0.4);
+      });
+      // 반짝이는 고음 추가
+      const sparkOsc = audioCtx.createOscillator();
+      const sparkGain = audioCtx.createGain();
+      sparkOsc.connect(sparkGain); sparkGain.connect(audioCtx.destination);
+      sparkOsc.type = 'triangle';
+      sparkOsc.frequency.setValueAtTime(2093, audioCtx.currentTime + 0.28);
+      sparkOsc.frequency.exponentialRampToValueAtTime(1046, audioCtx.currentTime + 0.55);
+      sparkGain.gain.setValueAtTime(0.15, audioCtx.currentTime + 0.28);
+      sparkGain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.6);
+      sparkOsc.start(audioCtx.currentTime + 0.28);
+      sparkOsc.stop(audioCtx.currentTime + 0.65);
+    }
+
+    function playGrabSound() {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.connect(gain); gain.connect(audioCtx.destination);
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(440, audioCtx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(660, audioCtx.currentTime + 0.08);
+      gain.gain.setValueAtTime(0.12, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.12);
+      osc.start(audioCtx.currentTime);
+      osc.stop(audioCtx.currentTime + 0.15);
+    }
+
+    function playMissSound() {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.connect(gain); gain.connect(audioCtx.destination);
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(300, audioCtx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(180, audioCtx.currentTime + 0.18);
+      gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.22);
+      osc.start(audioCtx.currentTime);
+      osc.stop(audioCtx.currentTime + 0.25);
+    }
+
+    // AudioContext는 사용자 인터랙션 후 활성화
+    function resumeAudio() { if (audioCtx.state === 'suspended') audioCtx.resume(); }
+    document.addEventListener('click', resumeAudio, { once: true });
+
     // ---- State ----
     const video = document.getElementById('video');
     const canvas = document.getElementById('canvas');
@@ -220,8 +281,8 @@
     function update() {
       if (!handPos) return;
 
-      // Mirror hand position (canvas is mirrored via CSS)
-      const hx = 1 - handPos.x;
+      // 캔버스 내부에서 미러 처리하므로 handPos.x 를 그대로 사용
+      const hx = handPos.x;
       const hy = handPos.y;
 
       // Grab detection
@@ -240,6 +301,7 @@
           if (nearest) {
             heldBall = nearest;
             nearest.held = true;
+            resumeAudio(); playGrabSound();
             setStatus('✊ 잡았다! 바구니로 가져가세요!');
           }
         }
@@ -258,6 +320,7 @@
             div.className = 'caught-item';
             div.textContent = `🎉 ${heldBall.name}`;
             caughtItemsEl.prepend(div);
+            playScoreSound();
             setStatus('🎉 획득! 대단해요!');
             statusBar.style.borderColor = '#00b894';
             setTimeout(() => { statusBar.style.borderColor = '#6c5ce7'; }, 1200);
@@ -265,6 +328,7 @@
             // Drop with a little velocity
             heldBall.vx = (Math.random() - 0.5) * 0.01;
             heldBall.vy = (Math.random() - 0.5) * 0.01;
+            playMissSound();
             setStatus('아쉽다! 바구니 위에서 손을 펴세요!');
           }
           heldBall.held = false;
@@ -300,10 +364,8 @@
       const bx = BASKET.x * W, by = BASKET.y * H;
       const bw = BASKET.w * W, bh = BASKET.h * H;
 
-      // Glow when hand is near
-      const isNear = handPos &&
-        (1 - handPos.x) > BASKET.x - 0.08 && (1 - handPos.x) < BASKET.x + BASKET.w + 0.08 &&
-        handPos.y > BASKET.y - 0.08 && handPos.y < BASKET.y + BASKET.h + 0.08;
+      // (이 함수는 더 이상 직접 사용 안 함 — drawBasketMirrored 사용)
+      const isNear = false;
 
       ctx.save();
       if (isNear && heldBall) {
@@ -434,21 +496,24 @@
     function render(W, H) {
       ctx.clearRect(0, 0, W, H);
 
-      // Draw video frame (mirrored because canvas transform:scaleX(-1))
+      // 전체 캔버스를 좌우 반전 (거울 모드) — 비디오 + 게임 오브젝트 모두
       ctx.save();
+      ctx.translate(W, 0);
       ctx.scale(-1, 1);
-      ctx.drawImage(video, -W, 0, W, H);
-      ctx.restore();
+      ctx.drawImage(video, 0, 0, W, H);
 
       // Dark overlay
       ctx.fillStyle = 'rgba(0,0,0,0.18)';
       ctx.fillRect(0, 0, W, H);
 
-      drawBasket(W, H);
-      drawAllBalls(W, H);
-      drawHand(W, H);
+      // 게임 오브젝트는 반전된 공간 안에서 handPos.x 를 그대로 사용
+      drawBasketMirrored(W, H);
+      drawAllBallsMirrored(W, H);
+      drawHandMirrored(W, H);
 
-      // Grab strength bar
+      ctx.restore();
+
+      // Grab strength bar (UI — 반전 공간 밖)
       if (handPos) {
         ctx.fillStyle = 'rgba(0,0,0,0.5)';
         ctx.beginPath();
@@ -465,6 +530,94 @@
         ctx.fillText(grabConfidence > 0.55 ? '✊ 쥐는 중' : '🤚 펼침', W / 2, H - 58);
       }
     }
+
+    // 반전된 캔버스 안에서 handPos.x 를 직접 사용 (미러 보정 불필요)
+    function getMirroredHand(W, H) {
+      if (!handPos) return null;
+      return { x: handPos.x * W, y: handPos.y * H };
+    }
+
+    function drawBasketMirrored(W, H) {
+      const bx = BASKET.x * W, by = BASKET.y * H;
+      const bw = BASKET.w * W, bh = BASKET.h * H;
+      const h = getMirroredHand(W, H);
+      const isNear = h && h.x > bx - 0.05*W && h.x < bx + bw + 0.05*W &&
+                     h.y > by - 0.05*H && h.y < by + bh + 0.05*H;
+
+      ctx.save();
+      if (isNear && heldBall) { ctx.shadowColor = '#00b894'; ctx.shadowBlur = 24; }
+      ctx.strokeStyle = isNear && heldBall ? '#00b894' : '#f9ca24';
+      ctx.lineWidth = 3;
+      ctx.fillStyle = 'rgba(0,0,0,0.35)';
+      ctx.beginPath();
+      ctx.moveTo(bx, by);
+      ctx.lineTo(bx + bw, by);
+      ctx.lineTo(bx + bw * 0.9, by + bh);
+      ctx.lineTo(bx + bw * 0.1, by + bh);
+      ctx.closePath();
+      ctx.fill(); ctx.stroke();
+      ctx.strokeStyle = isNear && heldBall ? 'rgba(0,184,148,0.5)' : 'rgba(249,202,36,0.4)';
+      ctx.lineWidth = 1.5;
+      for (let i = 1; i < 4; i++) {
+        const t = i / 4;
+        ctx.beginPath();
+        ctx.moveTo(bx + bw * (0 + 0.1*t), by + bh*t);
+        ctx.lineTo(bx + bw * (1 - 0.1*t), by + bh*t);
+        ctx.stroke();
+      }
+      ctx.fillStyle = isNear && heldBall ? '#00b894' : '#f9ca24';
+      ctx.font = `bold ${Math.round(bw * 0.2)}px Arial`;
+      ctx.textAlign = 'center';
+      ctx.fillText('🧺', bx + bw / 2, by - 6);
+      ctx.restore();
+    }
+
+    function drawBallMirrored(b, W, H) {
+      if (b.scored) return;
+      const x = b.x * W, y = b.y * H;
+      const r = b.r * Math.min(W, H);
+      const wobbleR = r + (b.held ? Math.sin(b.wobble) * r * 0.08 : 0);
+      ctx.save();
+      if (b.held) { ctx.shadowColor = b.color; ctx.shadowBlur = 20; }
+      const grad = ctx.createRadialGradient(x - r*0.3, y - r*0.3, r*0.1, x, y, wobbleR);
+      grad.addColorStop(0, '#ffffff');
+      grad.addColorStop(0.25, b.color);
+      grad.addColorStop(1, shadeColor(b.color, -50));
+      ctx.fillStyle = grad;
+      ctx.beginPath(); ctx.arc(x, y, wobbleR, 0, Math.PI*2); ctx.fill();
+      const eyeR = r*0.15, eyeOff = r*0.28;
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath(); ctx.arc(x - eyeOff, y - eyeOff*0.3, eyeR, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(x + eyeOff, y - eyeOff*0.3, eyeR, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = '#222';
+      ctx.beginPath(); ctx.arc(x - eyeOff+1, y - eyeOff*0.3+1, eyeR*0.55, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(x + eyeOff+1, y - eyeOff*0.3+1, eyeR*0.55, 0, Math.PI*2); ctx.fill();
+      ctx.restore();
+    }
+
+    function drawAllBallsMirrored(W, H) {
+      balls.forEach(b => { if (!b.held) drawBallMirrored(b, W, H); });
+      balls.forEach(b => { if (b.held)  drawBallMirrored(b, W, H); });
+    }
+
+    function drawHandMirrored(W, H) {
+      const h = getMirroredHand(W, H);
+      if (!h) return;
+      ctx.save();
+      ctx.globalAlpha = 0.7 + grabConfidence * 0.3;
+      ctx.strokeStyle = isGrabbing ? '#f9ca24' : '#ffffff';
+      ctx.lineWidth = 3;
+      const ringR = isGrabbing ? 22 : 28;
+      ctx.beginPath(); ctx.arc(h.x, h.y, ringR, 0, Math.PI*2); ctx.stroke();
+      ctx.fillStyle = isGrabbing ? 'rgba(249,202,36,0.3)' : 'rgba(255,255,255,0.15)';
+      ctx.beginPath(); ctx.arc(h.x, h.y, ringR, 0, Math.PI*2); ctx.fill();
+      ctx.font = `${isGrabbing ? 20 : 18}px Arial`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillStyle = '#fff';
+      ctx.fillText(isGrabbing ? '✊' : '🤚', h.x, h.y);
+      ctx.restore();
+    }
+
 
     function setStatus(msg) {
       statusBar.textContent = msg;
