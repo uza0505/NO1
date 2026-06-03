@@ -296,7 +296,9 @@
       body.addShape(new CANNON.Sphere(r * 0.9));
       const x = (Math.random() - 0.5) * (MACHINE_W - 1.5);
       const z = (Math.random() - 0.5) * (MACHINE_D - 1.5);
-      const y = FLOOR_Y + 0.5 + Math.floor(index / 6) * 0.9 + Math.random() * 0.5;
+      // Stack tightly near floor so they don't fly up
+      const layer = Math.floor(index / 8);
+      const y = FLOOR_Y + r + 0.05 + layer * (r * 2.1);
       body.position.set(x, y, z);
       body.linearDamping = 0.3;
       body.angularDamping = 0.4;
@@ -425,16 +427,22 @@
 
     function tryGrab() {
       let closest = null;
-      let minDist = 0.9;
+      let minDist = 0.65; // 더 좁은 판정 범위
       blobs.forEach(b => {
         if (b.grabbed || b.deposited) return;
         const bx = b.body.position.x;
         const by = b.body.position.y;
         const bz = b.body.position.z;
-        const dist = Math.sqrt((bx - clawX) ** 2 + (by - clawY) ** 2 + (bz - clawZ) ** 2);
+        // XZ 거리 위주로 판정 (집게 위치와 수평 거리)
+        const horizDist = Math.sqrt((bx - clawX) ** 2 + (bz - clawZ) ** 2);
+        const vertDist = Math.abs(by - clawY);
+        const dist = horizDist + vertDist * 0.5;
         if (dist < minDist) { minDist = dist; closest = b; }
       });
-      return closest;
+      if (!closest) return null;
+      // 거리가 가까울수록 성공률 높음, 기본 성공률 45%
+      const successChance = 0.45 + (1 - minDist / 0.65) * 0.35;
+      return Math.random() < successChance ? closest : null;
     }
 
     const BOX_X = -MACHINE_W / 2 - 1.4;
@@ -460,7 +468,8 @@
           } else {
             clawOpen = false;
             clawState = 'raising';
-            setStatus('아쉽다! 놓쳤어요...');
+            const missMsgs = ['아쉽다! 놓쳤어요...', '아깝다! 거의 잡을 뻔...', '다시 도전!', '앗! 미끄러졌어요!'];
+            setStatus(missMsgs[Math.floor(Math.random() * missMsgs.length)]);
           }
         }
       } else if (clawState === 'raising') {
