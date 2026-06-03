@@ -223,7 +223,7 @@
     let balls = [];
 
     // 바구니: y=0.28 로 내려서 노트북/모바일 모두 완전히 보이게
-    const BASKET = { x: 0.72, y: 0.28, w: 0.22, h: 0.24 };
+    const BASKET = { x: 0.68, y: 0.28, w: 0.28, h: 0.28 };
 
     // ---- Balls ----
     function createBalls() {
@@ -555,16 +555,26 @@
         ctx.lineTo(bx + bw * (1 - 0.1*t), by + bh*t);
         ctx.stroke();
       }
-      // 이모지는 바구니 안 중앙에 (잘리지 않도록)
-      ctx.font = `bold ${Math.round(bw * 0.28)}px Arial`;
+      // 이모지: scale(-1,1) 안이라 뒤집히지 않음 (이모지는 유니코드라 OK)
+      ctx.font = `bold ${Math.round(bw * 0.38)}px Arial`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillStyle = isNear && heldBall ? '#00b894' : '#f9ca24';
-      ctx.fillText('🧺', bx + bw / 2, by + bh * 0.55);
-      ctx.fillStyle = isNear && heldBall ? '#00b894' : 'rgba(255,255,255,0.85)';
-      ctx.font = `bold ${Math.round(bw * 0.13)}px Arial`;
-      ctx.fillText('여기에 넣기!', bx + bw / 2, by + bh * 0.88);
+      ctx.fillText('🧺', bx + bw / 2, by + bh * 0.48);
+
+      // 텍스트는 scale(-1,1) 때문에 뒤집히므로 임시로 정방향으로 되돌림
+      const centerX = bx + bw / 2; // canvas 좌표계 중심
+      ctx.save();
+      ctx.translate(centerX, by + bh * 0.82);
+      ctx.scale(-1, 1); // 다시 뒤집어서 정방향
+      ctx.fillStyle = isNear && heldBall ? '#00b894' : 'rgba(255,255,255,0.9)';
+      ctx.font = `bold ${Math.round(bw * 0.15)}px Arial`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('여기에 넣기!', 0, 0);
       ctx.restore();
+
+      ctx.restore(); // drawBasketMirrored save
     }
 
     function drawBallMirrored(b, W, H) {
