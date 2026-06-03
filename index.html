@@ -1,0 +1,579 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>뽑기 게임 3D</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #1a1a2e; overflow: hidden; font-family: 'Arial', sans-serif; }
+    #canvas-container { width: 100vw; height: 100vh; }
+    #ui {
+      position: fixed; top: 0; left: 0; right: 0;
+      display: flex; justify-content: space-between; align-items: flex-start;
+      padding: 16px; pointer-events: none; z-index: 10;
+    }
+    #score-panel {
+      background: rgba(0,0,0,0.6); border-radius: 12px; padding: 12px 20px;
+      color: white; text-align: center; border: 2px solid #f9ca24;
+    }
+    #score-panel h2 { font-size: 14px; color: #f9ca24; margin-bottom: 4px; }
+    #score-panel .score { font-size: 32px; font-weight: bold; color: white; }
+    #controls-panel {
+      background: rgba(0,0,0,0.6); border-radius: 12px; padding: 12px 16px;
+      color: #ccc; font-size: 13px; line-height: 1.8;
+    }
+    #controls-panel h3 { color: #f9ca24; margin-bottom: 6px; font-size: 14px; }
+    #status-bar {
+      position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+      background: rgba(0,0,0,0.7); color: white; padding: 10px 24px;
+      border-radius: 24px; font-size: 16px; font-weight: bold;
+      border: 2px solid #6c5ce7; z-index: 10; transition: all 0.3s;
+    }
+    #caught-list {
+      position: fixed; bottom: 20px; right: 20px;
+      background: rgba(0,0,0,0.6); border-radius: 12px; padding: 12px 16px;
+      color: white; font-size: 13px; border: 2px solid #00b894; z-index: 10;
+      max-height: 200px; overflow-y: auto;
+    }
+    #caught-list h3 { color: #00b894; margin-bottom: 6px; }
+    .caught-item { padding: 2px 0; }
+    #btn-lower {
+      position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+      pointer-events: all;
+    }
+  </style>
+</head>
+<body>
+  <div id="canvas-container"></div>
+
+  <div id="ui">
+    <div id="score-panel">
+      <h2>획득한 인형</h2>
+      <div class="score" id="score">0</div>
+    </div>
+    <div id="controls-panel">
+      <h3>조작 방법</h3>
+      ← → : 좌우 이동<br>
+      ↑ ↓ : 앞뒤 이동<br>
+      <b style="color:#f9ca24">Space : 집기!</b><br>
+      R : 게임 리셋
+    </div>
+  </div>
+
+  <div id="status-bar">← → ↑ ↓ 로 집게를 이동하고 Space 로 집으세요!</div>
+
+  <div id="caught-list">
+    <h3>🎁 획득 목록</h3>
+    <div id="caught-items"></div>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/cannon.js/0.6.2/cannon.min.js"></script>
+  <script>
+    // ---- Config ----
+    const MACHINE_W = 7, MACHINE_D = 7, MACHINE_H = 8;
+    const FLOOR_Y = 0;
+    const CLAW_HOME_Y = MACHINE_H - 0.5;
+    const CLAW_MIN_Y = 1.2;
+    const CLAW_SPEED = 0.06;
+    const CLAW_LOWER_SPEED = 0.05;
+    const NUM_BLOBS = 22;
+
+    const BLOB_COLORS = [
+      0xff6b9d, 0xf9ca24, 0x6c5ce7, 0x00b894,
+      0xfd79a8, 0x74b9ff, 0xa29bfe, 0x55efc4,
+      0xe17055, 0xfdcb6e, 0x636e72, 0x2d3436,
+      0x00cec9, 0xd63031, 0x0984e3,
+    ];
+
+    const BLOB_NAMES = ['핑크 슬라임', '노란 병아리', '보라 몬스터', '초록 개구리',
+      '분홍 토끼', '하늘 고양이', '라벤더 곰', '민트 공룡',
+      '주황 여우', '노을 오리', '회색 두더지', '검정 팬더',
+      '청록 물고기', '빨강 악마', '파랑 고래'];
+
+    // ---- Three.js ----
+    const container = document.getElementById('canvas-container');
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.setPixelRatio(window.devicePixelRatio);
+    container.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x1a1a2e);
+    scene.fog = new THREE.Fog(0x1a1a2e, 20, 50);
+
+    const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 100);
+    camera.position.set(0, 14, 18);
+    camera.lookAt(0, 2, 0);
+
+    // Lights
+    const ambient = new THREE.AmbientLight(0xffffff, 0.5);
+    scene.add(ambient);
+
+    const dirLight = new THREE.DirectionalLight(0xffffff, 1.0);
+    dirLight.position.set(5, 15, 8);
+    dirLight.castShadow = true;
+    dirLight.shadow.mapSize.set(2048, 2048);
+    dirLight.shadow.camera.near = 0.5;
+    dirLight.shadow.camera.far = 50;
+    dirLight.shadow.camera.left = -15;
+    dirLight.shadow.camera.right = 15;
+    dirLight.shadow.camera.top = 15;
+    dirLight.shadow.camera.bottom = -15;
+    scene.add(dirLight);
+
+    const pointLight = new THREE.PointLight(0xf9ca24, 1.5, 15);
+    pointLight.position.set(0, MACHINE_H + 1, 0);
+    scene.add(pointLight);
+
+    // ---- Physics ----
+    const world = new CANNON.World();
+    world.gravity.set(0, -15, 0);
+    world.broadphase = new CANNON.NaiveBroadphase();
+    world.solver.iterations = 10;
+
+    const physicsMat = new CANNON.Material('blobs');
+    const contactMat = new CANNON.ContactMaterial(physicsMat, physicsMat, {
+      friction: 0.4, restitution: 0.3
+    });
+    world.addContactMaterial(contactMat);
+
+    // ---- Machine Box ----
+    function buildMachine() {
+      const wallMat = new THREE.MeshPhongMaterial({
+        color: 0x2c3e50, transparent: true, opacity: 0.15,
+        side: THREE.DoubleSide
+      });
+      const frameMat = new THREE.MeshPhongMaterial({ color: 0xf9ca24, shininess: 100 });
+      const floorMat = new THREE.MeshPhongMaterial({ color: 0x34495e, shininess: 40 });
+
+      const hw = MACHINE_W / 2, hd = MACHINE_D / 2;
+
+      // Floor
+      const floorGeo = new THREE.BoxGeometry(MACHINE_W, 0.2, MACHINE_D);
+      const floor = new THREE.Mesh(floorGeo, floorMat);
+      floor.position.set(0, FLOOR_Y, 0);
+      floor.receiveShadow = true;
+      scene.add(floor);
+
+      // Physics floor
+      const floorBody = new CANNON.Body({ mass: 0 });
+      floorBody.addShape(new CANNON.Plane());
+      floorBody.quaternion.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), -Math.PI / 2);
+      floorBody.position.set(0, FLOOR_Y + 0.1, 0);
+      world.addBody(floorBody);
+
+      // Walls (visual glass panels)
+      const walls = [
+        { size: [MACHINE_W, MACHINE_H, 0.1], pos: [0, MACHINE_H / 2, -hd] },
+        { size: [MACHINE_W, MACHINE_H, 0.1], pos: [0, MACHINE_H / 2, hd] },
+        { size: [0.1, MACHINE_H, MACHINE_D], pos: [-hw, MACHINE_H / 2, 0] },
+        { size: [0.1, MACHINE_H, MACHINE_D], pos: [hw, MACHINE_H / 2, 0] },
+      ];
+      walls.forEach(w => {
+        const geo = new THREE.BoxGeometry(...w.size);
+        const mesh = new THREE.Mesh(geo, wallMat);
+        mesh.position.set(...w.pos);
+        scene.add(mesh);
+
+        const body = new CANNON.Body({ mass: 0 });
+        body.addShape(new CANNON.Box(new CANNON.Vec3(w.size[0] / 2, w.size[1] / 2, w.size[2] / 2)));
+        body.position.set(...w.pos);
+        world.addBody(body);
+      });
+
+      // Frame edges
+      const edgePositions = [
+        [-hw, MACHINE_H / 2, -hd], [hw, MACHINE_H / 2, -hd],
+        [-hw, MACHINE_H / 2, hd], [hw, MACHINE_H / 2, hd],
+      ];
+      edgePositions.forEach(([x, y, z]) => {
+        const geo = new THREE.CylinderGeometry(0.08, 0.08, MACHINE_H, 8);
+        const mesh = new THREE.Mesh(geo, frameMat);
+        mesh.position.set(x, y, z);
+        scene.add(mesh);
+      });
+
+      // Top frame
+      const topGeo = new THREE.BoxGeometry(MACHINE_W + 0.2, 0.15, MACHINE_D + 0.2);
+      const top = new THREE.Mesh(topGeo, frameMat);
+      top.position.set(0, MACHINE_H, 0);
+      scene.add(top);
+
+      // Collection box (left side)
+      const boxMat = new THREE.MeshPhongMaterial({ color: 0x8B4513, shininess: 30 });
+      const boxW = 2.8, boxD = 2.8, boxH = 1.8;
+      const boxX = -hw - boxW / 2 - 0.1;
+
+      const boxParts = [
+        { size: [boxW, 0.15, boxD], pos: [boxX, 0.075, 0] },           // floor
+        { size: [0.15, boxH, boxD], pos: [boxX - boxW / 2, boxH / 2, 0] }, // left
+        { size: [0.15, boxH, boxD], pos: [boxX + boxW / 2, boxH / 2, 0] }, // right
+        { size: [boxW, boxH, 0.15], pos: [boxX, boxH / 2, -boxD / 2] }, // back
+      ];
+      boxParts.forEach(p => {
+        const geo = new THREE.BoxGeometry(...p.size);
+        const mesh = new THREE.Mesh(geo, boxMat);
+        mesh.position.set(...p.pos);
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        scene.add(mesh);
+
+        const body = new CANNON.Body({ mass: 0 });
+        body.addShape(new CANNON.Box(new CANNON.Vec3(p.size[0] / 2, p.size[1] / 2, p.size[2] / 2)));
+        body.position.set(...p.pos);
+        world.addBody(body);
+      });
+
+      // Rail (horizontal bar for claw movement)
+      const railGeo = new THREE.CylinderGeometry(0.05, 0.05, MACHINE_W, 8);
+      railGeo.applyMatrix4(new THREE.Matrix4().makeRotationZ(Math.PI / 2));
+      const rail = new THREE.Mesh(railGeo, frameMat);
+      rail.position.set(0, MACHINE_H - 0.1, 0);
+      scene.add(rail);
+
+      const railGeo2 = new THREE.CylinderGeometry(0.05, 0.05, MACHINE_D, 8);
+      railGeo2.applyMatrix4(new THREE.Matrix4().makeRotationX(Math.PI / 2));
+      const rail2 = new THREE.Mesh(railGeo2, frameMat);
+      rail2.position.set(0, MACHINE_H - 0.1, 0);
+      scene.add(rail2);
+    }
+
+    // ---- Blob Characters ----
+    const blobs = [];
+
+    function makeEye(parentMesh, ox, oy, oz, r = 0.07) {
+      const eyeGeo = new THREE.SphereGeometry(r, 8, 8);
+      const eyeMat = new THREE.MeshPhongMaterial({ color: 0xffffff });
+      const eye = new THREE.Mesh(eyeGeo, eyeMat);
+      eye.position.set(ox, oy, oz);
+      parentMesh.add(eye);
+
+      const pupilGeo = new THREE.SphereGeometry(r * 0.55, 8, 8);
+      const pupilMat = new THREE.MeshPhongMaterial({ color: 0x111111 });
+      const pupil = new THREE.Mesh(pupilGeo, pupilMat);
+      pupil.position.set(ox * 0.98, oy, oz * 1.05);
+      parentMesh.add(pupil);
+    }
+
+    function createBlob(index) {
+      const colorIndex = index % BLOB_COLORS.length;
+      const color = BLOB_COLORS[colorIndex];
+      const name = BLOB_NAMES[colorIndex];
+
+      // Random radius variation
+      const r = 0.38 + Math.random() * 0.14;
+
+      const geo = new THREE.SphereGeometry(r, 16, 14);
+      // Squish the sphere a bit
+      geo.applyMatrix4(new THREE.Matrix4().makeScale(1, 0.88, 1));
+
+      const mat = new THREE.MeshPhongMaterial({ color, shininess: 60 });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+
+      // Eyes
+      const eyeZ = r * 0.88;
+      makeEye(mesh, -r * 0.28, r * 0.25, eyeZ, r * 0.16);
+      makeEye(mesh, r * 0.28, r * 0.25, eyeZ, r * 0.16);
+
+      scene.add(mesh);
+
+      // Physics
+      const body = new CANNON.Body({ mass: 0.6, material: physicsMat });
+      body.addShape(new CANNON.Sphere(r * 0.9));
+      const x = (Math.random() - 0.5) * (MACHINE_W - 1.5);
+      const z = (Math.random() - 0.5) * (MACHINE_D - 1.5);
+      const y = FLOOR_Y + 0.5 + Math.floor(index / 6) * 0.9 + Math.random() * 0.5;
+      body.position.set(x, y, z);
+      body.linearDamping = 0.3;
+      body.angularDamping = 0.4;
+      world.addBody(body);
+
+      blobs.push({ mesh, body, r, name, colorIndex, grabbed: false, deposited: false });
+      return blobs[blobs.length - 1];
+    }
+
+    // ---- Claw ----
+    let clawX = 0, clawZ = 0;
+    let clawY = CLAW_HOME_Y;
+    let clawState = 'idle'; // idle | lowering | grabbing | raising | depositing
+    let grabbedBlob = null;
+    let clawOpen = true;
+
+    const clawGroup = new THREE.Group();
+    scene.add(clawGroup);
+
+    const wireMat = new THREE.MeshPhongMaterial({ color: 0xd4d4d4, shininess: 80 });
+    const clawMat = new THREE.MeshPhongMaterial({ color: 0xf9ca24, shininess: 100 });
+
+    // Wire/rope
+    const wireGeo = new THREE.CylinderGeometry(0.025, 0.025, 1, 8);
+    const wireMesh = new THREE.Mesh(wireGeo, wireMat);
+    clawGroup.add(wireMesh);
+
+    // Hub
+    const hubGeo = new THREE.SphereGeometry(0.18, 10, 10);
+    const hub = new THREE.Mesh(hubGeo, clawMat);
+    clawGroup.add(hub);
+
+    // 3 prongs
+    const prongs = [];
+    for (let i = 0; i < 3; i++) {
+      const angle = (i / 3) * Math.PI * 2;
+      const prongGroup = new THREE.Group();
+      prongGroup.rotation.y = angle;
+
+      const upperGeo = new THREE.CylinderGeometry(0.025, 0.025, 0.5, 8);
+      const upper = new THREE.Mesh(upperGeo, clawMat);
+      upper.position.set(0.2, -0.25, 0);
+      upper.rotation.z = 0.4;
+      prongGroup.add(upper);
+
+      const lowerGeo = new THREE.CylinderGeometry(0.02, 0.025, 0.45, 8);
+      const lower = new THREE.Mesh(lowerGeo, clawMat);
+      lower.position.set(0.35, -0.58, 0);
+      lower.rotation.z = -0.5;
+      prongGroup.add(lower);
+
+      clawGroup.add(prongGroup);
+      prongs.push(prongGroup);
+    }
+
+    function updateClaw() {
+      const wireLen = MACHINE_H - clawY;
+      wireMesh.scale.y = Math.max(wireLen, 0.1);
+      wireMesh.position.set(0, MACHINE_H - clawY - wireLen / 2, 0);
+
+      hub.position.set(0, 0, 0);
+
+      // Prong open/close animation
+      const openAngle = clawOpen ? 0 : -0.5;
+      prongs.forEach(p => {
+        p.rotation.z = THREE.MathUtils.lerp(p.rotation.z, openAngle, 0.15);
+      });
+
+      clawGroup.position.set(clawX, clawY, clawZ);
+    }
+
+    // ---- Game State ----
+    let score = 0;
+    const keys = {};
+    const statusBar = document.getElementById('status-bar');
+    const scoreEl = document.getElementById('score');
+    const caughtItemsEl = document.getElementById('caught-items');
+
+    function setStatus(msg) {
+      statusBar.textContent = msg;
+    }
+
+    function addCaught(name) {
+      score++;
+      scoreEl.textContent = score;
+      const div = document.createElement('div');
+      div.className = 'caught-item';
+      div.textContent = `🎉 ${name}`;
+      caughtItemsEl.prepend(div);
+    }
+
+    document.addEventListener('keydown', e => {
+      keys[e.code] = true;
+      if (e.code === 'Space' && clawState === 'idle') {
+        e.preventDefault();
+        startLowering();
+      }
+      if (e.code === 'KeyR') resetGame();
+    });
+    document.addEventListener('keyup', e => { keys[e.code] = false; });
+
+    function startLowering() {
+      clawState = 'lowering';
+      clawOpen = true;
+      setStatus('집게를 내리는 중...');
+    }
+
+    let depositTimer = 0;
+
+    function processInput(dt) {
+      if (clawState !== 'idle') return;
+      const speed = CLAW_SPEED;
+      const hw = MACHINE_W / 2 - 0.5;
+      const hd = MACHINE_D / 2 - 0.5;
+      if (keys['ArrowLeft'])  clawX = Math.max(clawX - speed, -hw);
+      if (keys['ArrowRight']) clawX = Math.min(clawX + speed, hw);
+      if (keys['ArrowUp'])    clawZ = Math.max(clawZ - speed, -hd);
+      if (keys['ArrowDown'])  clawZ = Math.min(clawZ + speed, hd);
+    }
+
+    function tryGrab() {
+      let closest = null;
+      let minDist = 0.9;
+      blobs.forEach(b => {
+        if (b.grabbed || b.deposited) return;
+        const bx = b.body.position.x;
+        const by = b.body.position.y;
+        const bz = b.body.position.z;
+        const dist = Math.sqrt((bx - clawX) ** 2 + (by - clawY) ** 2 + (bz - clawZ) ** 2);
+        if (dist < minDist) { minDist = dist; closest = b; }
+      });
+      return closest;
+    }
+
+    const BOX_X = -MACHINE_W / 2 - 1.4;
+    const BOX_Y = 1.2;
+
+    function updateGame(dt) {
+      if (clawState === 'lowering') {
+        clawY -= CLAW_LOWER_SPEED;
+        if (clawY <= CLAW_MIN_Y) {
+          clawY = CLAW_MIN_Y;
+          // Try to grab
+          const blob = tryGrab();
+          if (blob) {
+            blob.grabbed = true;
+            grabbedBlob = blob;
+            blob.body.mass = 0;
+            blob.body.updateMassProperties();
+            blob.body.velocity.set(0, 0, 0);
+            blob.body.angularVelocity.set(0, 0, 0);
+            clawOpen = false;
+            clawState = 'raising';
+            setStatus('잡았다! 올리는 중...');
+          } else {
+            clawOpen = false;
+            clawState = 'raising';
+            setStatus('아쉽다! 놓쳤어요...');
+          }
+        }
+      } else if (clawState === 'raising') {
+        clawY += CLAW_LOWER_SPEED;
+        if (grabbedBlob) {
+          grabbedBlob.body.position.set(clawX, clawY - 0.4, clawZ);
+          grabbedBlob.mesh.position.copy(grabbedBlob.body.position);
+        }
+        if (clawY >= CLAW_HOME_Y) {
+          clawY = CLAW_HOME_Y;
+          clawState = grabbedBlob ? 'depositing' : 'idle';
+          if (grabbedBlob) setStatus('박스로 이동 중...');
+          else setStatus('← → ↑ ↓ 로 집게를 이동하고 Space 로 집으세요!');
+        }
+      } else if (clawState === 'depositing') {
+        // Move toward box
+        const tx = BOX_X, tz = 0;
+        const dx = tx - clawX, dz = tz - clawZ;
+        const dist = Math.sqrt(dx * dx + dz * dz);
+        if (dist > 0.1) {
+          const speed = 0.04;
+          clawX += (dx / dist) * speed;
+          clawZ += (dz / dist) * speed;
+        } else {
+          // Drop
+          clawOpen = true;
+          if (grabbedBlob) {
+            grabbedBlob.body.mass = 0.6;
+            grabbedBlob.body.updateMassProperties();
+            grabbedBlob.body.position.set(BOX_X, BOX_Y + 1, 0);
+            grabbedBlob.body.velocity.set(0, -2, 0);
+            addCaught(grabbedBlob.name);
+            grabbedBlob.grabbed = false;
+            grabbedBlob.deposited = true;
+            grabbedBlob = null;
+          }
+          depositTimer = 60; // frames to wait before returning
+          clawState = 'returning';
+          setStatus('획득! 집게를 돌려보내는 중...');
+        }
+      } else if (clawState === 'returning') {
+        depositTimer--;
+        const dx = 0 - clawX, dz = 0 - clawZ;
+        const dist = Math.sqrt(dx * dx + dz * dz);
+        if (dist > 0.1) {
+          const speed = 0.04;
+          clawX += (dx / dist) * speed;
+          clawZ += (dz / dist) * speed;
+        }
+        if (depositTimer <= 0) {
+          clawX = 0; clawZ = 0;
+          clawState = 'idle';
+          setStatus('← → ↑ ↓ 로 집게를 이동하고 Space 로 집으세요!');
+        }
+      }
+    }
+
+    function resetGame() {
+      // Remove old blobs
+      blobs.forEach(b => {
+        scene.remove(b.mesh);
+        world.remove(b.body);
+      });
+      blobs.length = 0;
+      score = 0;
+      scoreEl.textContent = '0';
+      caughtItemsEl.innerHTML = '';
+      clawX = 0; clawZ = 0; clawY = CLAW_HOME_Y;
+      clawState = 'idle'; clawOpen = true; grabbedBlob = null;
+      for (let i = 0; i < NUM_BLOBS; i++) createBlob(i);
+      setStatus('← → ↑ ↓ 로 집게를 이동하고 Space 로 집으세요!');
+    }
+
+    // ---- Build Scene ----
+    buildMachine();
+    for (let i = 0; i < NUM_BLOBS; i++) createBlob(i);
+
+    // Decorative background elements
+    function addStars() {
+      const geo = new THREE.BufferGeometry();
+      const verts = [];
+      for (let i = 0; i < 300; i++) {
+        verts.push((Math.random() - 0.5) * 80, Math.random() * 30 + 5, (Math.random() - 0.5) * 80);
+      }
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+      const mat = new THREE.PointsMaterial({ color: 0xffffff, size: 0.08 });
+      scene.add(new THREE.Points(geo, mat));
+    }
+    addStars();
+
+    // ---- Resize ----
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    // ---- Animate ----
+    const clock = new THREE.Clock();
+    const fixedStep = 1 / 60;
+
+    function animate() {
+      requestAnimationFrame(animate);
+      const dt = clock.getDelta();
+
+      world.step(fixedStep, dt, 3);
+
+      processInput(dt);
+      updateGame(dt);
+      updateClaw();
+
+      // Sync blob meshes with physics
+      blobs.forEach(b => {
+        if (!b.grabbed) {
+          b.mesh.position.copy(b.body.position);
+          b.mesh.quaternion.copy(b.body.quaternion);
+        }
+      });
+
+      // Gentle camera bob
+      const t = clock.elapsedTime;
+      camera.position.y = 14 + Math.sin(t * 0.3) * 0.15;
+
+      renderer.render(scene, camera);
+    }
+
+    animate();
+  </script>
+</body>
+</html>
