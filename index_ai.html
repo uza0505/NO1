@@ -24,31 +24,41 @@
 
     #ui {
       position: fixed; top: 0; left: 0; right: 0;
-      display: flex; justify-content: space-between; align-items: flex-start;
-      padding: 16px; pointer-events: none; z-index: 20;
+      display: flex; justify-content: flex-end; align-items: flex-start;
+      padding: 12px; pointer-events: none; z-index: 20;
     }
 
     .panel {
       background: rgba(0,0,0,0.65);
-      border-radius: 14px; padding: 12px 20px;
+      border-radius: 14px; padding: 10px 16px;
       color: white; border: 2px solid #f9ca24;
       backdrop-filter: blur(6px);
     }
 
-    #score-panel h2 { font-size: 13px; color: #f9ca24; margin-bottom: 2px; }
-    #score-panel .score { font-size: 36px; font-weight: bold; }
+    #score-panel {
+      position: fixed; top: 12px; right: 12px;
+      text-align: center;
+    }
+    #score-panel h2 { font-size: 12px; color: #f9ca24; margin-bottom: 2px; }
+    #score-panel .score { font-size: 32px; font-weight: bold; }
 
-    #hint-panel { font-size: 13px; color: #ddd; line-height: 1.9; }
-    #hint-panel h3 { color: #f9ca24; margin-bottom: 4px; font-size: 14px; }
+    /* 안내문: 접을 수 있는 작은 버튼 형태로 하단에 */
+    #hint-panel {
+      position: fixed; bottom: 70px; right: 12px;
+      font-size: 12px; color: #ddd; line-height: 1.8;
+      max-width: 170px;
+    }
+    #hint-panel h3 { color: #f9ca24; margin-bottom: 3px; font-size: 13px; }
     .grab-indicator { color: #55efc4; font-weight: bold; }
 
     #status-bar {
-      position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
-      background: rgba(0,0,0,0.75); color: white; padding: 10px 28px;
-      border-radius: 28px; font-size: 15px; font-weight: bold;
+      position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
+      background: rgba(0,0,0,0.75); color: white; padding: 8px 20px;
+      border-radius: 24px; font-size: 13px; font-weight: bold;
       border: 2px solid #6c5ce7; z-index: 20;
       backdrop-filter: blur(6px);
       transition: border-color 0.3s;
+      white-space: nowrap;
     }
 
     #loading {
@@ -69,10 +79,10 @@
     }
 
     #caught-list {
-      position: fixed; bottom: 24px; right: 20px;
-      background: rgba(0,0,0,0.65); border-radius: 12px; padding: 12px 16px;
-      color: white; font-size: 13px; border: 2px solid #00b894;
-      z-index: 20; max-height: 180px; overflow-y: auto;
+      position: fixed; bottom: 70px; left: 12px;
+      background: rgba(0,0,0,0.65); border-radius: 12px; padding: 10px 14px;
+      color: white; font-size: 12px; border: 2px solid #00b894;
+      z-index: 20; max-height: 140px; overflow-y: auto;
       backdrop-filter: blur(6px);
     }
     #caught-list h3 { color: #00b894; margin-bottom: 4px; }
@@ -212,8 +222,8 @@
     let heldBall = null;
     let balls = [];
 
-    // Basket position (top-left area, normalized)
-    const BASKET = { x: 0.12, y: 0.15, w: 0.16, h: 0.18 };
+    // 바구니: canvas 좌표계에서 x=0.82 → 미러 후 시각적으로 왼쪽 상단 18%
+    const BASKET = { x: 0.80, y: 0.04, w: 0.18, h: 0.22 };
 
     // ---- Balls ----
     function createBalls() {
@@ -666,8 +676,13 @@
 
       const camera = new Camera(video, {
         onFrame: async () => {
-          canvas.width = video.videoWidth || window.innerWidth;
-          canvas.height = video.videoHeight || window.innerHeight;
+          // 깜빡임 방지: 크기가 바뀔 때만 재설정
+          const vw = video.videoWidth || window.innerWidth;
+          const vh = video.videoHeight || window.innerHeight;
+          if (canvas.width !== vw || canvas.height !== vh) {
+            canvas.width = vw;
+            canvas.height = vh;
+          }
           await hands.send({ image: video });
         },
         width: 1280, height: 720,
