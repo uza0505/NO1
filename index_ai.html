@@ -1,0 +1,724 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>손으로 공 잡기 게임</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #000; overflow: hidden; font-family: 'Arial', sans-serif; }
+
+    #container {
+      position: relative;
+      width: 100vw; height: 100vh;
+      display: flex; align-items: center; justify-content: center;
+    }
+
+    #video { display: none; }
+
+    #canvas {
+      width: 100vw; height: 100vh;
+      object-fit: cover;
+      /* 거울 모드는 canvas 내부에서 처리 */
+    }
+
+    #ui {
+      position: fixed; top: 0; left: 0; right: 0;
+      display: flex; justify-content: flex-end; align-items: flex-start;
+      padding: 12px; pointer-events: none; z-index: 20;
+    }
+
+    .panel {
+      background: rgba(0,0,0,0.65);
+      border-radius: 14px; padding: 10px 16px;
+      color: white; border: 2px solid #f9ca24;
+      backdrop-filter: blur(6px);
+    }
+
+    #score-panel {
+      position: fixed; top: 12px; right: 12px;
+      text-align: center;
+    }
+    #score-panel h2 { font-size: 12px; color: #f9ca24; margin-bottom: 2px; }
+    #score-panel .score { font-size: 32px; font-weight: bold; }
+
+    /* 안내문: 접을 수 있는 작은 버튼 형태로 하단에 */
+    #hint-panel {
+      position: fixed; bottom: 70px; right: 12px;
+      font-size: 12px; color: #ddd; line-height: 1.8;
+      max-width: 170px;
+    }
+    #hint-panel h3 { color: #f9ca24; margin-bottom: 3px; font-size: 13px; }
+    .grab-indicator { color: #55efc4; font-weight: bold; }
+
+    #status-bar {
+      position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
+      background: rgba(0,0,0,0.75); color: white; padding: 8px 20px;
+      border-radius: 24px; font-size: 13px; font-weight: bold;
+      border: 2px solid #6c5ce7; z-index: 20;
+      backdrop-filter: blur(6px);
+      transition: border-color 0.3s;
+      white-space: nowrap;
+    }
+
+    #loading {
+      position: fixed; inset: 0; background: #0a0a1a;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      color: white; z-index: 100; gap: 16px;
+    }
+    #loading h1 { font-size: 28px; color: #f9ca24; }
+    #loading p { color: #aaa; font-size: 15px; }
+    #loading-bar {
+      width: 260px; height: 8px;
+      background: #333; border-radius: 4px; overflow: hidden;
+    }
+    #loading-fill {
+      height: 100%; background: linear-gradient(90deg, #6c5ce7, #f9ca24);
+      border-radius: 4px; width: 0%; transition: width 0.4s;
+    }
+
+    #caught-list {
+      position: fixed; bottom: 70px; left: 12px;
+      background: rgba(0,0,0,0.65); border-radius: 12px; padding: 10px 14px;
+      color: white; font-size: 12px; border: 2px solid #00b894;
+      z-index: 20; max-height: 140px; overflow-y: auto;
+      backdrop-filter: blur(6px);
+    }
+    #caught-list h3 { color: #00b894; margin-bottom: 4px; }
+    .caught-item { padding: 2px 0; }
+  </style>
+</head>
+<body>
+  <div id="loading">
+    <h1>🎮 손으로 공 잡기</h1>
+    <p id="loading-text">MediaPipe 로딩 중...</p>
+    <div id="loading-bar"><div id="loading-fill"></div></div>
+    <p style="color:#666; font-size:12px;">카메라 권한을 허용해 주세요</p>
+  </div>
+
+  <div id="container">
+    <video id="video" playsinline></video>
+    <canvas id="canvas"></canvas>
+  </div>
+
+  <div id="ui">
+    <div class="panel" id="score-panel">
+      <h2>획득한 공</h2>
+      <div class="score" id="score">0</div>
+    </div>
+    <div class="panel" id="hint-panel">
+      <h3>조작 방법</h3>
+      ☝️ 검지로 공 근처 접근<br>
+      ✊ 주먹 쥐기 → 공 잡기<br>
+      🧺 <span class="grab-indicator">바구니에서 손 펴기</span> → 획득!
+    </div>
+  </div>
+
+  <div id="status-bar" id="status">카메라를 준비 중입니다...</div>
+
+  <div id="caught-list">
+    <h3>🎉 획득 목록</h3>
+    <div id="caught-items"></div>
+  </div>
+
+  <!-- MediaPipe CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+  <script>
+    // ---- Config ----
+    const NUM_BALLS = 15;
+    const BALL_NAMES = [
+      '핑크 슬라임', '노란 병아리', '보라 몬스터', '초록 개구리',
+      '하늘 고양이', '라벤더 곰', '민트 공룡', '주황 여우',
+      '빨강 악마', '파랑 고래', '회색 두더지', '검정 팬더',
+      '청록 물고기', '노을 오리', '흰 토끼',
+    ];
+    const BALL_COLORS = [
+      '#ff6b9d', '#f9ca24', '#a29bfe', '#00b894',
+      '#74b9ff', '#d3a4ff', '#55efc4', '#e17055',
+      '#d63031', '#0984e3', '#636e72', '#2d3436',
+      '#00cec9', '#fdcb6e', '#dfe6e9',
+    ];
+
+    // ---- Audio ----
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+    function playScoreSound() {
+      // 즐거운 상승 화음 + 팡파레 효과
+      const notes = [523.25, 659.25, 783.99, 1046.5]; // C5 E5 G5 C6
+      notes.forEach((freq, i) => {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.connect(gain); gain.connect(audioCtx.destination);
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(freq, audioCtx.currentTime + i * 0.08);
+        gain.gain.setValueAtTime(0, audioCtx.currentTime + i * 0.08);
+        gain.gain.linearRampToValueAtTime(0.22, audioCtx.currentTime + i * 0.08 + 0.03);
+        gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + i * 0.08 + 0.35);
+        osc.start(audioCtx.currentTime + i * 0.08);
+        osc.stop(audioCtx.currentTime + i * 0.08 + 0.4);
+      });
+      // 반짝이는 고음 추가
+      const sparkOsc = audioCtx.createOscillator();
+      const sparkGain = audioCtx.createGain();
+      sparkOsc.connect(sparkGain); sparkGain.connect(audioCtx.destination);
+      sparkOsc.type = 'triangle';
+      sparkOsc.frequency.setValueAtTime(2093, audioCtx.currentTime + 0.28);
+      sparkOsc.frequency.exponentialRampToValueAtTime(1046, audioCtx.currentTime + 0.55);
+      sparkGain.gain.setValueAtTime(0.15, audioCtx.currentTime + 0.28);
+      sparkGain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.6);
+      sparkOsc.start(audioCtx.currentTime + 0.28);
+      sparkOsc.stop(audioCtx.currentTime + 0.65);
+    }
+
+    function playGrabSound() {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.connect(gain); gain.connect(audioCtx.destination);
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(440, audioCtx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(660, audioCtx.currentTime + 0.08);
+      gain.gain.setValueAtTime(0.12, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.12);
+      osc.start(audioCtx.currentTime);
+      osc.stop(audioCtx.currentTime + 0.15);
+    }
+
+    function playMissSound() {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.connect(gain); gain.connect(audioCtx.destination);
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(300, audioCtx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(180, audioCtx.currentTime + 0.18);
+      gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.22);
+      osc.start(audioCtx.currentTime);
+      osc.stop(audioCtx.currentTime + 0.25);
+    }
+
+    // AudioContext는 사용자 인터랙션 후 활성화
+    function resumeAudio() { if (audioCtx.state === 'suspended') audioCtx.resume(); }
+    document.addEventListener('click', resumeAudio, { once: true });
+
+    // ---- State ----
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const statusBar = document.getElementById('status-bar');
+    const scoreEl = document.getElementById('score');
+    const caughtItemsEl = document.getElementById('caught-items');
+    const loadingEl = document.getElementById('loading');
+    const loadingFill = document.getElementById('loading-fill');
+    const loadingText = document.getElementById('loading-text');
+
+    let score = 0;
+    let handPos = null;
+    let grabConfidence = 0;
+    let isGrabbing = false;
+    let heldBall = null;
+    let balls = [];
+
+    // 바구니: y=0.28 로 내려서 노트북/모바일 모두 완전히 보이게
+    const BASKET = { x: 0.68, y: 0.28, w: 0.28, h: 0.28 };
+
+    // ---- Balls ----
+    function createBalls() {
+      balls = [];
+      for (let i = 0; i < NUM_BALLS; i++) {
+        balls.push({
+          id: i,
+          x: 0.2 + Math.random() * 0.6,
+          y: 0.2 + Math.random() * 0.6,
+          vx: (Math.random() - 0.5) * 0.002,
+          vy: (Math.random() - 0.5) * 0.002,
+          r: 0.038 + Math.random() * 0.022,
+          color: BALL_COLORS[i % BALL_COLORS.length],
+          name: BALL_NAMES[i % BALL_NAMES.length],
+          held: false,
+          scored: false,
+          wobble: Math.random() * Math.PI * 2,
+          wobbleSpeed: 0.04 + Math.random() * 0.03,
+        });
+      }
+    }
+
+    // ---- Hand Tracking ----
+    function dist2D(x1, y1, x2, y2) {
+      return Math.sqrt((x1 - x2) ** 2 + (y1 - y2) ** 2);
+    }
+
+    function detectGrab(landmarks) {
+      // Thumb tip (4) vs Index tip (8)
+      const thumb = landmarks[4];
+      const index = landmarks[8];
+      const pinchDist = dist2D(thumb.x, thumb.y, index.x, index.y);
+
+      // All finger tips vs palm center (wrist=0, middle base=9)
+      const wrist = landmarks[0];
+      const midBase = landmarks[9];
+      const palmSize = dist2D(wrist.x, wrist.y, midBase.x, midBase.y);
+
+      // Finger curl: tip vs base distance
+      const fingerTips = [8, 12, 16, 20];
+      const fingerBases = [5, 9, 13, 17];
+      let curledCount = 0;
+      for (let i = 0; i < fingerTips.length; i++) {
+        const tip = landmarks[fingerTips[i]];
+        const base = landmarks[fingerBases[i]];
+        const tipToWrist = dist2D(tip.x, tip.y, wrist.x, wrist.y);
+        const baseToWrist = dist2D(base.x, base.y, wrist.x, wrist.y);
+        if (tipToWrist < baseToWrist * 1.1) curledCount++;
+      }
+
+      const pinchStrength = Math.max(0, 1 - pinchDist / (palmSize * 0.8));
+      const curlStrength = curledCount / 4;
+      return Math.min(1, pinchStrength * 0.6 + curlStrength * 0.4);
+    }
+
+    function getHandCenter(landmarks) {
+      // 검지 손가락 끝(8)을 커서로 사용 — 더 정밀하고 직관적
+      return { x: landmarks[8].x, y: landmarks[8].y };
+    }
+
+    // ---- Game Logic ----
+    function update() {
+      if (!handPos) return;
+
+      const hx = handPos.x;
+      const hy = handPos.y;
+
+      const wasGrabbing = isGrabbing;
+      isGrabbing = grabConfidence > 0.52;
+
+      // 주먹 쥐기 시작 → 검지 근처 공 잡기
+      if (isGrabbing && !wasGrabbing && !heldBall) {
+        let nearest = null, nearDist = Infinity;
+        balls.forEach(b => {
+          if (b.scored) return;
+          const d = dist2D(hx, hy, b.x, b.y);
+          if (d < b.r * 3.0 && d < nearDist) { nearDist = d; nearest = b; }
+        });
+        if (nearest) {
+          heldBall = nearest;
+          nearest.held = true;
+          resumeAudio(); playGrabSound();
+          setStatus('✊ 잡았다! 바구니로 가져가세요!');
+        }
+      }
+
+      // 주먹 펴기 → 공 놓기
+      if (!isGrabbing && wasGrabbing && heldBall) {
+        if (hx > BASKET.x && hx < BASKET.x + BASKET.w &&
+            hy > BASKET.y && hy < BASKET.y + BASKET.h) {
+          score++;
+          scoreEl.textContent = score;
+          heldBall.scored = true;
+          const div = document.createElement('div');
+          div.className = 'caught-item';
+          div.textContent = `🎉 ${heldBall.name}`;
+          caughtItemsEl.prepend(div);
+          playScoreSound();
+          setStatus('🎉 획득! 대단해요!');
+          statusBar.style.borderColor = '#00b894';
+          setTimeout(() => { statusBar.style.borderColor = '#6c5ce7'; }, 1200);
+        } else {
+          heldBall.vx = (Math.random() - 0.5) * 0.01;
+          heldBall.vy = (Math.random() - 0.5) * 0.01;
+          playMissSound();
+          setStatus('아쉽다! 바구니 위에서 손을 펴세요!');
+        }
+        heldBall.held = false;
+        heldBall = null;
+      }
+
+      // 공을 들고 있으면 검지 따라 이동
+      if (heldBall && isGrabbing) {
+        heldBall.x += (hx - heldBall.x) * 0.4;
+        heldBall.y += (hy - heldBall.y) * 0.4;
+        heldBall.vx = 0; heldBall.vy = 0;
+      }
+
+      // Physics for free balls
+      balls.forEach(b => {
+        if (b.held || b.scored) return;
+        b.x += b.vx;
+        b.y += b.vy;
+        b.vx *= 0.98;
+        b.vy *= 0.98;
+        // Bounce off edges
+        if (b.x - b.r < 0) { b.x = b.r; b.vx *= -0.6; }
+        if (b.x + b.r > 1) { b.x = 1 - b.r; b.vx *= -0.6; }
+        if (b.y - b.r < 0) { b.y = b.r; b.vy *= -0.6; }
+        if (b.y + b.r > 1) { b.y = 1 - b.r; b.vy *= -0.6; }
+        b.wobble += b.wobbleSpeed;
+      });
+    }
+
+    // ---- Drawing ----
+    function drawBasket(W, H) {
+      const bx = BASKET.x * W, by = BASKET.y * H;
+      const bw = BASKET.w * W, bh = BASKET.h * H;
+
+      // (이 함수는 더 이상 직접 사용 안 함 — drawBasketMirrored 사용)
+      const isNear = false;
+
+      ctx.save();
+      if (isNear && heldBall) {
+        ctx.shadowColor = '#00b894';
+        ctx.shadowBlur = 24;
+      }
+
+      // Basket body
+      ctx.strokeStyle = isNear && heldBall ? '#00b894' : '#f9ca24';
+      ctx.lineWidth = 3;
+      ctx.fillStyle = 'rgba(0,0,0,0.35)';
+
+      // Draw basket shape
+      ctx.beginPath();
+      ctx.moveTo(bx, by);
+      ctx.lineTo(bx + bw, by);
+      ctx.lineTo(bx + bw * 0.9, by + bh);
+      ctx.lineTo(bx + bw * 0.1, by + bh);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+
+      // Weave lines
+      ctx.strokeStyle = isNear && heldBall ? 'rgba(0,184,148,0.5)' : 'rgba(249,202,36,0.4)';
+      ctx.lineWidth = 1.5;
+      for (let i = 1; i < 4; i++) {
+        const t = i / 4;
+        ctx.beginPath();
+        ctx.moveTo(bx + bw * (0 + 0.1 * t), by + bh * t);
+        ctx.lineTo(bx + bw * (1 - 0.1 * t), by + bh * t);
+        ctx.stroke();
+      }
+
+      // Label
+      ctx.fillStyle = isNear && heldBall ? '#00b894' : '#f9ca24';
+      ctx.font = `bold ${Math.round(bw * 0.2)}px Arial`;
+      ctx.textAlign = 'center';
+      ctx.fillText('🧺', bx + bw / 2, by - 6);
+      ctx.restore();
+    }
+
+    function drawBall(b, W, H) {
+      if (b.scored) return;
+      const x = b.x * W, y = b.y * H;
+      const r = b.r * Math.min(W, H);
+      const wobbleR = r + (b.held ? Math.sin(b.wobble) * r * 0.08 : 0);
+
+      ctx.save();
+      if (b.held) {
+        ctx.shadowColor = b.color;
+        ctx.shadowBlur = 20;
+      }
+
+      // Main sphere gradient
+      const grad = ctx.createRadialGradient(x - r * 0.3, y - r * 0.3, r * 0.1, x, y, wobbleR);
+      grad.addColorStop(0, '#ffffff');
+      grad.addColorStop(0.25, b.color);
+      grad.addColorStop(1, shadeColor(b.color, -50));
+      ctx.fillStyle = grad;
+
+      ctx.beginPath();
+      ctx.arc(x, y, wobbleR, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Eyes
+      const eyeR = r * 0.15;
+      const eyeOff = r * 0.28;
+      // White
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath(); ctx.arc(x - eyeOff, y - eyeOff * 0.3, eyeR, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(x + eyeOff, y - eyeOff * 0.3, eyeR, 0, Math.PI * 2); ctx.fill();
+      // Pupil
+      ctx.fillStyle = '#222';
+      ctx.beginPath(); ctx.arc(x - eyeOff + 1, y - eyeOff * 0.3 + 1, eyeR * 0.55, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(x + eyeOff + 1, y - eyeOff * 0.3 + 1, eyeR * 0.55, 0, Math.PI * 2); ctx.fill();
+
+      ctx.restore();
+    }
+
+    function drawHand(W, H) {
+      if (!handPos) return;
+      const hx = (1 - handPos.x) * W;
+      const hy = handPos.y * H;
+
+      ctx.save();
+      const alpha = 0.7 + grabConfidence * 0.3;
+      ctx.globalAlpha = alpha;
+
+      // Outer ring
+      ctx.strokeStyle = isGrabbing ? '#f9ca24' : '#ffffff';
+      ctx.lineWidth = 3;
+      const ringR = isGrabbing ? 22 : 28;
+      ctx.beginPath();
+      ctx.arc(hx, hy, ringR, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // Inner fill
+      ctx.fillStyle = isGrabbing ? 'rgba(249,202,36,0.3)' : 'rgba(255,255,255,0.15)';
+      ctx.beginPath();
+      ctx.arc(hx, hy, ringR, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Grab state icon
+      ctx.font = `${isGrabbing ? 20 : 18}px Arial`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = '#fff';
+      ctx.fillText(isGrabbing ? '✊' : '🤚', hx, hy);
+
+      ctx.restore();
+    }
+
+    function drawAllBalls(W, H) {
+      // Draw non-held first
+      balls.forEach(b => { if (!b.held) drawBall(b, W, H); });
+      // Draw held on top
+      balls.forEach(b => { if (b.held) drawBall(b, W, H); });
+    }
+
+    function shadeColor(hex, amt) {
+      const num = parseInt(hex.replace('#', ''), 16);
+      const r = Math.max(0, Math.min(255, (num >> 16) + amt));
+      const g = Math.max(0, Math.min(255, ((num >> 8) & 0xff) + amt));
+      const b = Math.max(0, Math.min(255, (num & 0xff) + amt));
+      return `rgb(${r},${g},${b})`;
+    }
+
+    function render(W, H) {
+      ctx.clearRect(0, 0, W, H);
+
+      // 전체 캔버스를 좌우 반전 (거울 모드) — 비디오 + 게임 오브젝트 모두
+      ctx.save();
+      ctx.translate(W, 0);
+      ctx.scale(-1, 1);
+      ctx.drawImage(video, 0, 0, W, H);
+
+      // Dark overlay
+      ctx.fillStyle = 'rgba(0,0,0,0.18)';
+      ctx.fillRect(0, 0, W, H);
+
+      // 게임 오브젝트는 반전된 공간 안에서 handPos.x 를 그대로 사용
+      drawBasketMirrored(W, H);
+      drawAllBallsMirrored(W, H);
+      drawHandMirrored(W, H);
+
+      ctx.restore();
+
+      // 공을 들고 있을 때 상단에 표시
+      if (heldBall) {
+        ctx.fillStyle = 'rgba(249,202,36,0.85)';
+        ctx.font = 'bold 14px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText(`☝️ ${heldBall.name} — 바구니로!`, W / 2, H - 30);
+      }
+    }
+
+    // 반전된 캔버스 안에서 handPos.x 를 직접 사용 (미러 보정 불필요)
+    function getMirroredHand(W, H) {
+      if (!handPos) return null;
+      return { x: handPos.x * W, y: handPos.y * H };
+    }
+
+    function drawBasketMirrored(W, H) {
+      const bx = BASKET.x * W, by = BASKET.y * H;
+      const bw = BASKET.w * W, bh = BASKET.h * H;
+      const h = getMirroredHand(W, H);
+      const isNear = h && h.x > bx - 0.05*W && h.x < bx + bw + 0.05*W &&
+                     h.y > by - 0.05*H && h.y < by + bh + 0.05*H;
+
+      ctx.save();
+      if (isNear && heldBall) { ctx.shadowColor = '#00b894'; ctx.shadowBlur = 24; }
+      ctx.strokeStyle = isNear && heldBall ? '#00b894' : '#f9ca24';
+      ctx.lineWidth = 3;
+      ctx.fillStyle = 'rgba(0,0,0,0.35)';
+      ctx.beginPath();
+      ctx.moveTo(bx, by);
+      ctx.lineTo(bx + bw, by);
+      ctx.lineTo(bx + bw * 0.9, by + bh);
+      ctx.lineTo(bx + bw * 0.1, by + bh);
+      ctx.closePath();
+      ctx.fill(); ctx.stroke();
+      ctx.strokeStyle = isNear && heldBall ? 'rgba(0,184,148,0.5)' : 'rgba(249,202,36,0.4)';
+      ctx.lineWidth = 1.5;
+      for (let i = 1; i < 4; i++) {
+        const t = i / 4;
+        ctx.beginPath();
+        ctx.moveTo(bx + bw * (0 + 0.1*t), by + bh*t);
+        ctx.lineTo(bx + bw * (1 - 0.1*t), by + bh*t);
+        ctx.stroke();
+      }
+      // 이모지: scale(-1,1) 안이라 뒤집히지 않음 (이모지는 유니코드라 OK)
+      ctx.font = `bold ${Math.round(bw * 0.38)}px Arial`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = isNear && heldBall ? '#00b894' : '#f9ca24';
+      ctx.fillText('🧺', bx + bw / 2, by + bh * 0.48);
+
+      // 텍스트는 scale(-1,1) 때문에 뒤집히므로 임시로 정방향으로 되돌림
+      const centerX = bx + bw / 2; // canvas 좌표계 중심
+      ctx.save();
+      ctx.translate(centerX, by + bh * 0.82);
+      ctx.scale(-1, 1); // 다시 뒤집어서 정방향
+      ctx.fillStyle = isNear && heldBall ? '#00b894' : 'rgba(255,255,255,0.9)';
+      ctx.font = `bold ${Math.round(bw * 0.15)}px Arial`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('여기에 넣기!', 0, 0);
+      ctx.restore();
+
+      ctx.restore(); // drawBasketMirrored save
+    }
+
+    function drawBallMirrored(b, W, H) {
+      if (b.scored) return;
+      const x = b.x * W, y = b.y * H;
+      const r = b.r * Math.min(W, H);
+      const wobbleR = r + (b.held ? Math.sin(b.wobble) * r * 0.08 : 0);
+      ctx.save();
+      if (b.held) { ctx.shadowColor = b.color; ctx.shadowBlur = 20; }
+      const grad = ctx.createRadialGradient(x - r*0.3, y - r*0.3, r*0.1, x, y, wobbleR);
+      grad.addColorStop(0, '#ffffff');
+      grad.addColorStop(0.25, b.color);
+      grad.addColorStop(1, shadeColor(b.color, -50));
+      ctx.fillStyle = grad;
+      ctx.beginPath(); ctx.arc(x, y, wobbleR, 0, Math.PI*2); ctx.fill();
+      const eyeR = r*0.15, eyeOff = r*0.28;
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath(); ctx.arc(x - eyeOff, y - eyeOff*0.3, eyeR, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(x + eyeOff, y - eyeOff*0.3, eyeR, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = '#222';
+      ctx.beginPath(); ctx.arc(x - eyeOff+1, y - eyeOff*0.3+1, eyeR*0.55, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(x + eyeOff+1, y - eyeOff*0.3+1, eyeR*0.55, 0, Math.PI*2); ctx.fill();
+      ctx.restore();
+    }
+
+    function drawAllBallsMirrored(W, H) {
+      balls.forEach(b => { if (!b.held) drawBallMirrored(b, W, H); });
+      balls.forEach(b => { if (b.held)  drawBallMirrored(b, W, H); });
+    }
+
+    function drawHandMirrored(W, H) {
+      const h = getMirroredHand(W, H);
+      if (!h) return;
+      ctx.save();
+      ctx.globalAlpha = 0.7 + grabConfidence * 0.3;
+      const col = heldBall ? '#f9ca24' : (isGrabbing ? '#fd79a8' : '#ffffff');
+      ctx.strokeStyle = col;
+      ctx.lineWidth = isGrabbing ? 3 : 2;
+      const ringR = isGrabbing ? 18 : 14;
+      ctx.beginPath(); ctx.arc(h.x, h.y, ringR, 0, Math.PI*2); ctx.stroke();
+      ctx.fillStyle = isGrabbing ? 'rgba(249,202,36,0.25)' : 'rgba(255,255,255,0.12)';
+      ctx.beginPath(); ctx.arc(h.x, h.y, ringR, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = col;
+      ctx.beginPath(); ctx.arc(h.x, h.y, 5, 0, Math.PI*2); ctx.fill();
+      ctx.font = '14px Arial';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(heldBall ? '🎯' : (isGrabbing ? '✊' : '☝️'), h.x, h.y - 24);
+      ctx.restore();
+    }
+
+
+    function setStatus(msg) {
+      statusBar.textContent = msg;
+    }
+
+    // ---- Main Loop ----
+    function loop() {
+      const W = canvas.width, H = canvas.height;
+      update();
+      render(W, H);
+      requestAnimationFrame(loop);
+    }
+
+    // ---- MediaPipe Setup ----
+    function setupMediaPipe() {
+      const hands = new Hands({
+        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+      });
+
+      hands.setOptions({
+        maxNumHands: 1,
+        modelComplexity: 0,          // 모바일 성능 최적화
+        minDetectionConfidence: 0.6,
+        minTrackingConfidence: 0.5,
+      });
+
+      hands.onResults((results) => {
+        if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+          const landmarks = results.multiHandLandmarks[0];
+          handPos = getHandCenter(landmarks);
+          grabConfidence = detectGrab(landmarks);
+          if (!heldBall) setStatus(isGrabbing ? '✊ 주먹 쥔 채로 공에 가져가세요!' : '☝️ 검지로 공에 다가가 주먹을 쥐세요!');
+        } else {
+          handPos = null;
+          if (heldBall) {
+            heldBall.held = false;
+            heldBall = null;
+          }
+          setStatus('손이 감지되지 않아요. 카메라 앞에 손을 보여주세요!');
+        }
+      });
+
+      const camera = new Camera(video, {
+        onFrame: async () => {
+          // 깜빡임 방지: 크기가 바뀔 때만 재설정
+          const vw = video.videoWidth || window.innerWidth;
+          const vh = video.videoHeight || window.innerHeight;
+          if (canvas.width !== vw || canvas.height !== vh) {
+            canvas.width = vw;
+            canvas.height = vh;
+          }
+          await hands.send({ image: video });
+        },
+        width: 1280, height: 720,
+      });
+
+      loadingText.textContent = '카메라 시작 중...';
+      loadingFill.style.width = '80%';
+
+      camera.start().then(() => {
+        loadingFill.style.width = '100%';
+        setTimeout(() => {
+          loadingEl.style.display = 'none';
+          setStatus('🤚 손을 카메라에 보여주세요!');
+          loop();
+        }, 500);
+      }).catch(err => {
+        loadingText.textContent = '카메라 오류: ' + err.message;
+        loadingText.style.color = '#ff6b6b';
+      });
+    }
+
+    // ---- Init ----
+    createBalls();
+    loadingFill.style.width = '30%';
+    loadingText.textContent = 'MediaPipe 초기화 중...';
+
+    // Wait for scripts to load
+    let checkCount = 0;
+    const checkReady = setInterval(() => {
+      checkCount++;
+      loadingFill.style.width = `${30 + checkCount * 5}%`;
+      if (typeof Hands !== 'undefined' && typeof Camera !== 'undefined') {
+        clearInterval(checkReady);
+        loadingFill.style.width = '60%';
+        loadingText.textContent = '카메라 권한 요청 중...';
+        setupMediaPipe();
+      }
+      if (checkCount > 20) {
+        clearInterval(checkReady);
+        loadingText.textContent = '스크립트 로드 실패. 새로고침 해주세요.';
+        loadingText.style.color = '#ff6b6b';
+      }
+    }, 300);
+  </script>
+</body>
+</html>
